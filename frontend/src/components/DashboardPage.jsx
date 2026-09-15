@@ -220,68 +220,72 @@ export default function DashboardPage() {
                       className="rolex-gold-btn flex items-center gap-1.5 px-4 py-2 text-xs font-extrabold rounded-xl cursor-pointer"
                     >
                       <FileSpreadsheet size={13} className="text-[#150F00]" />
-                      <span className="text-[#150F00]">View Full Ledger (49 Hops)</span>
+                      <span className="text-[#150F00]">Open Evidence Ledger</span>
                       <ArrowRight size={13} className="text-[#150F00]" />
                     </button>
-                    <button
-                      type="button"
-                      className="rolex-green-btn flex items-center gap-1.5 px-3.5 py-2 text-xs font-extrabold rounded-xl cursor-pointer"
-                      onClick={() => download(buildNotice(graph, firNo), "bnss-s94-notice.txt", "text/plain")}
-                    >
-                      <Download size={14} className="text-white" />
-                      <span className="text-white font-extrabold">Section 91 notice</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="rolex-green-btn flex items-center gap-1.5 px-3.5 py-2 text-xs font-extrabold rounded-xl cursor-pointer"
-                      onClick={() => download(buildDossier(graph, firNo), "forensic-attribution-dossier.html", "text/html")}
-                    >
-                      <FileText size={14} className="text-white" />
-                      <span className="text-white font-extrabold">Forensic dossier</span>
-                    </button>
+                    {graph && (
+                      <>
+                        <button
+                          type="button"
+                          className="rolex-green-btn flex items-center gap-1.5 px-3.5 py-2 text-xs font-extrabold rounded-xl cursor-pointer"
+                          onClick={() => download(buildNotice(graph, firNo), "bnss-s94-notice.txt", "text/plain")}
+                        >
+                          <Download size={14} className="text-white" />
+                          <span className="text-white font-extrabold">Section 91 notice</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="rolex-green-btn flex items-center gap-1.5 px-3.5 py-2 text-xs font-extrabold rounded-xl cursor-pointer"
+                          onClick={() => download(buildDossier(graph, firNo), "forensic-attribution-dossier.html", "text/html")}
+                        >
+                          <FileText size={14} className="text-white" />
+                          <span className="text-white font-extrabold">Forensic dossier</span>
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
 
                 {/* Quick Ledger Preview Strip */}
                 <div className="rounded-xl border border-slate-200/80 dark:border-white/5 bg-slate-100/80 dark:bg-black/30 p-4 shadow-sm">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-                    {EVIDENCE_RECORDS.slice(0, 3).map((rec) => (
-                      <div
-                        key={rec.hop}
-                        onClick={() => setSelectedEntity(rec)}
-                        className="rounded-xl border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-white/[0.03] p-3 hover:bg-white dark:hover:bg-white/[0.07] hover:border-[#E5B83B]/50 cursor-pointer transition flex flex-col justify-between shadow-sm"
-                      >
-                        <div className="flex items-center justify-between text-[11px] mb-1.5">
-                          <span className="font-bold text-slate-800 dark:text-slate-300">Hop #{rec.hop}</span>
-                          <span className="text-[10px] text-slate-500">{rec.datetime_ist}</span>
+                  {graph?.edges?.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                      {graph.edges.slice(0, 3).map((edge, idx) => (
+                        <div
+                          key={edge.tx_hash || idx}
+                          onClick={() => setSelectedEntity(edge)}
+                          className="rounded-xl border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-white/[0.03] p-3 hover:bg-white dark:hover:bg-white/[0.07] hover:border-[#E5B83B]/50 cursor-pointer transition flex flex-col justify-between shadow-sm"
+                        >
+                          <div className="flex items-center justify-between text-[11px] mb-1.5">
+                            <span className="font-bold text-slate-800 dark:text-slate-300">Hop #{idx + 1}</span>
+                            <span className="text-[10px] text-slate-500 font-mono">{edge.timestamp ? new Date(edge.timestamp).toLocaleTimeString() : "Live"}</span>
+                          </div>
+                          <div className="text-xs font-mono text-slate-700 dark:text-slate-200 truncate">
+                            {(edge.source || "").slice(0, 8)}... → {(edge.target || "").slice(0, 8)}...
+                          </div>
+                          <div className="mt-2 flex items-center justify-between">
+                            <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                              {Number(edge.amount || 0).toLocaleString()} {edge.token || "USDT"}
+                            </span>
+                            <span className="text-[9px] font-bold px-2 py-0.5 rounded border text-[#d8b84d] border-[#d8b84d]/30 bg-[#d8b84d]/10">
+                              VERIFIED
+                            </span>
+                          </div>
                         </div>
-                        <div className="text-xs font-mono text-slate-700 dark:text-slate-200 truncate">
-                          {rec.origin_sender.slice(0, 8)}... → {rec.counterparty.slice(0, 8)}...
-                        </div>
-                        <div className="mt-2 flex items-center justify-between">
-                          <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">₹{rec.value_inr.toLocaleString()} INR</span>
-                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded border ${
-                            rec.classification_type === "sweep"
-                              ? "text-[#d8b84d] border-[#d8b84d]/30 bg-[#d8b84d]/10"
-                              : "text-cyan-300 border-cyan-500/30 bg-cyan-950/40"
-                          }`}>
-                            {rec.classification}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-white/5">
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="flex flex-col sm:flex-row items-center justify-between text-xs text-slate-400 gap-2">
                     <span className="flex items-center gap-1.5">
                       <Fingerprint size={14} className="text-[#d8b84d]" />
-                      49 on-chain records indexed and cryptographically hashed for Section 65B compliance.
+                      Cryptographically certified audit trail enabled for Section 65B Indian Evidence Act compliance.
                     </span>
                     <button
                       type="button"
                       onClick={() => setActiveTab("evidence")}
-                      className="text-[#d8b84d] hover:underline font-semibold flex items-center gap-1"
+                      className="text-[#d8b84d] hover:underline font-semibold flex items-center gap-1 cursor-pointer"
                     >
-                      Open Complete Ledger →
+                      Open Complete Evidence Ledger →
                     </button>
                   </div>
                 </div>
