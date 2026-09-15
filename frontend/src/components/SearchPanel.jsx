@@ -10,12 +10,7 @@ const CHAINS = [
   { id: "Crime ring convergence", label: "Crime ring convergence", tag: "AI CONVERGENCE", color: "#d8b84d" },
 ];
 
-const PRESETS = [
-  { label: "TRON Mule", addr: "TX7sK...victim", chain: "Tron (TRC-20)" },
-  { label: "Polygon Layering", addr: "0xe6d634289cf30114041b63e6358", chain: "Polygon PoS (USDT)" },
-  { label: "ETH Peel Hop", addr: "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D", chain: "Ethereum (ERC-20)" },
-  { label: "Crime Ring", addr: "crime-ring-cluster-i4c-9921", chain: "Crime ring convergence" },
-];
+
 
 function detectChainFromAddress(addr) {
   if (!addr) return null;
@@ -123,21 +118,6 @@ export default function SearchPanel({ onTrace, loading }) {
             );
           })}
         </div>
-      </div>
-
-      {/* Preset sample buttons for quick testing */}
-      <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[10px]">
-        <span className="text-slate-500 font-medium mr-1">Quick Sample:</span>
-        {PRESETS.map((p) => (
-          <button
-            key={p.label}
-            type="button"
-            onClick={() => handleAddressChange(p.addr)}
-            className="rounded-lg border border-slate-200 dark:border-white/10 bg-slate-100/90 dark:bg-white/5 px-2.5 py-1 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-white/15 hover:border-slate-300 dark:hover:border-white/20 transition cursor-pointer shadow-sm"
-          >
-            {p.label}
-          </button>
-        ))}
       </div>
 
       {/* Address Input */}

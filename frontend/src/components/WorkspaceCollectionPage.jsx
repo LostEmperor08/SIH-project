@@ -14,106 +14,6 @@ import {
 } from "../lib/supabase.js";
 import { NodeDetailDrawer } from "./NodeDetailDrawer.jsx";
 
-// Default pre-populated high-profile suspect mule nodes for rich demonstration
-const DEFAULT_WATCHLIST_ENTITIES = [
-  {
-    id: "wl-mule-1",
-    address: "0xe6d634289cf30114041b63e6358",
-    label: "Consolidation Wallet (Pre-VASP)",
-    chain: "Polygon PoS",
-    risk_score: 96,
-    risk: "CRITICAL",
-    value_usdt: 48920.00,
-    value_inr: 4353880,
-    reason: "Batch swapper into exchange hot wallet. Hop #4 in fund dispersion path.",
-    typology: "Pre-VASP Aggregator",
-    added_at: "2026-09-11T14:30:00Z",
-    status: "ACTIVE_SWEEP",
-    last_active: "12s ago",
-    hop_depth: 4,
-  },
-  {
-    id: "wl-mule-2",
-    address: "TX7sKh81Lp9nQ2xM4vB6rT98Z1kLp9qWeR",
-    label: "High-Velocity TRC-20 Mule #4",
-    chain: "Tron (TRC-20)",
-    risk_score: 94,
-    risk: "CRITICAL",
-    value_usdt: 112450.00,
-    value_inr: 10008050,
-    reason: "Peeling chain split detected across 8 intermediate sub-wallets within 4 minutes.",
-    typology: "Peel Chain Splitter",
-    added_at: "2026-09-12T09:15:00Z",
-    status: "PEELING_DETECTED",
-    last_active: "45s ago",
-    hop_depth: 3,
-  },
-  {
-    id: "wl-mule-3",
-    address: "0x8f19c284b391740a1b639e4827104b63e635810",
-    label: "P2P Cashout Relay Node",
-    chain: "Polygon PoS",
-    risk_score: 88,
-    risk: "HIGH",
-    value_usdt: 24100.50,
-    value_inr: 2144944,
-    reason: "Direct disbursement to multiple off-ramp P2P merchant deposit tags.",
-    typology: "P2P Disperser",
-    added_at: "2026-09-10T18:40:00Z",
-    status: "STANDBY_LOOP",
-    last_active: "3m ago",
-    hop_depth: 2,
-  },
-  {
-    id: "wl-mule-4",
-    address: "0x3a4b9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b",
-    label: "Automated Layering Contract Proxy",
-    chain: "Ethereum (ERC-20)",
-    risk_score: 92,
-    risk: "CRITICAL",
-    value_usdt: 68300.00,
-    value_inr: 6078700,
-    reason: "Unverified bytecode contract receiving rapid multi-victim deposits.",
-    typology: "Smart Contract Mule",
-    added_at: "2026-09-09T11:20:00Z",
-    status: "ACTIVE_SWEEP",
-    last_active: "1m ago",
-    hop_depth: 5,
-  },
-  {
-    id: "wl-mule-5",
-    address: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-    label: "BTC SegWit Hop Aggregator",
-    chain: "Bitcoin (BTC)",
-    risk_score: 85,
-    risk: "HIGH",
-    value_usdt: 34500.00,
-    value_inr: 3070500,
-    reason: "Mixer unspent output clustering pattern matching Telegram task scam syndicate.",
-    typology: "UTXO Tumbler",
-    added_at: "2026-09-08T08:00:00Z",
-    status: "STANDBY_LOOP",
-    last_active: "8m ago",
-    hop_depth: 3,
-  },
-  {
-    id: "wl-mule-6",
-    address: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-    label: "Binance VASP Inbound Collector",
-    chain: "Polygon PoS",
-    risk_score: 98,
-    risk: "CRITICAL",
-    value_usdt: 185900.00,
-    value_inr: 16545100,
-    reason: "Direct VASP destination endpoint. Immediate Section 91 freeze required.",
-    typology: "VASP Endpoint",
-    added_at: "2026-09-12T12:00:00Z",
-    status: "FREEZE_PENDING",
-    last_active: "Just now",
-    hop_depth: 6,
-  }
-];
-
 export function WorkspaceCollectionPage({ view, graph, onNavigate }) {
   const [watchlist, setWatchlist] = useState([]);
   const [dossiers, setDossiers] = useState([]);
@@ -144,20 +44,12 @@ export function WorkspaceCollectionPage({ view, graph, onNavigate }) {
         fetchWatchlist(),
         fetchDossiers()
       ]);
-      
-      // Combine Supabase data with default demonstration nodes if Supabase has few items
-      const combinedWatchlist = [...(wlData || [])];
-      DEFAULT_WATCHLIST_ENTITIES.forEach(def => {
-        if (!combinedWatchlist.some(w => w.address?.toLowerCase() === def.address?.toLowerCase())) {
-          combinedWatchlist.push(def);
-        }
-      });
-
-      setWatchlist(combinedWatchlist);
+      setWatchlist(wlData || []);
       setDossiers(dosData || []);
     } catch (e) {
       console.error("Watchlist fetch error:", e);
-      setWatchlist(DEFAULT_WATCHLIST_ENTITIES);
+      setWatchlist([]);
+      setDossiers([]);
     } finally {
       setLoading(false);
     }
@@ -491,8 +383,43 @@ export function WorkspaceCollectionPage({ view, graph, onNavigate }) {
             </span>
           </div>
 
-          {/* ── Cards Grid View ── */}
-          {viewMode === "grid" ? (
+          {/* ── Cards Grid View or Table View or Empty State ── */}
+          {loading ? (
+            <div className="p-16 flex flex-col items-center justify-center text-center">
+              <RefreshCw className="h-8 w-8 animate-spin text-[#d8b84d] mb-3" />
+              <p className="text-sm font-semibold text-slate-300">Loading surveillance watchlist...</p>
+            </div>
+          ) : filteredWatchlist.length === 0 ? (
+            <div className="p-16 flex flex-col items-center justify-center text-center rounded-2xl border border-dashed border-slate-200 dark:border-white/10 bg-slate-50/50 dark:bg-black/20">
+              <div className="h-14 w-14 rounded-2xl bg-[#d8b84d]/10 border border-[#d8b84d]/20 flex items-center justify-center mb-4 text-[#d8b84d]">
+                <Shield size={28} />
+              </div>
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 mb-1">No Suspect Wallets Under Surveillance</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mb-6 leading-relaxed">
+                Add suspect addresses to activate 24/7 mempool tracking, or run a live trace from the Attribution Workbench to identify and preserve suspicious mule networks.
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsAddModalOpen(true)}
+                  className="rolex-gold-btn inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold cursor-pointer"
+                >
+                  <Plus size={14} className="text-[#150F00]" />
+                  <span>Add Suspect Target</span>
+                </button>
+                {onNavigate && (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate("workspace")}
+                    className="btn-secondary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold cursor-pointer"
+                  >
+                    <span>Launch Attribution Workbench</span>
+                    <ArrowRight size={14} />
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : viewMode === "grid" ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {filteredWatchlist.map((item) => (
                 <div
@@ -569,13 +496,13 @@ export function WorkspaceCollectionPage({ view, graph, onNavigate }) {
                       <div>
                         <span className="text-[10px] uppercase font-bold text-slate-500">Traced Volume</span>
                         <div className="text-sm font-bold text-slate-900 dark:text-white font-mono">
-                          {item.value_usdt ? `${Number(item.value_usdt).toLocaleString()} USDT` : "48,920 USDT"}
+                          {item.value_usdt ? `${Number(item.value_usdt).toLocaleString()} USDT` : "Active"}
                         </div>
                       </div>
                       <div className="text-right">
                         <span className="text-[10px] uppercase font-bold text-slate-500">INR Valuation</span>
                         <div className="text-sm font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                          ₹{item.value_inr ? item.value_inr.toLocaleString() : (48920 * 89).toLocaleString()} INR
+                          ₹{item.value_inr ? item.value_inr.toLocaleString() : (Number(item.value_usdt || 0) * 89).toLocaleString()} INR
                         </div>
                       </div>
                     </div>
@@ -635,8 +562,8 @@ export function WorkspaceCollectionPage({ view, graph, onNavigate }) {
                         {item.typology || "Mule Node"}
                       </td>
                       <td className="p-4">
-                        <div className="text-white font-bold">{item.value_usdt ? `${Number(item.value_usdt).toLocaleString()} USDT` : "48,920 USDT"}</div>
-                        <div className="text-emerald-400 text-[10px]">₹{item.value_inr ? item.value_inr.toLocaleString() : (48920 * 89).toLocaleString()} INR</div>
+                        <div className="text-white font-bold">{item.value_usdt ? `${Number(item.value_usdt).toLocaleString()} USDT` : "Active"}</div>
+                        <div className="text-emerald-400 text-[10px]">₹{item.value_inr ? item.value_inr.toLocaleString() : (Number(item.value_usdt || 0) * 89).toLocaleString()} INR</div>
                       </td>
                       <td className="p-4">
                         <span className="rounded-full bg-rose-950/80 border border-rose-500/40 px-2.5 py-0.5 text-[10px] font-bold text-rose-300">
@@ -677,57 +604,79 @@ export function WorkspaceCollectionPage({ view, graph, onNavigate }) {
             </div>
           </div>
 
-          <div className="space-y-4">
-            {dossiers.map((dos) => (
-              <div
-                key={dos.id}
-                onClick={() => setSelectedEntity({
-                  address: dos.deposit_address,
-                  label: dos.title,
-                  balance: dos.total_traced_usdt,
-                  value_inr: dos.total_traced_inr,
-                  risk_score: 95,
-                  audit_notes: `Legal Dossier Ref: ${dos.case_ref}. Attributed to ${dos.target_vasp} with ${dos.confidence} confidence.`,
-                })}
-                className="rounded-3xl border border-slate-200/90 dark:border-white/15 bg-white/90 dark:bg-white/[0.03] p-6 hover:bg-white dark:hover:bg-white/[0.06] hover:border-[#d8b84d]/60 dark:hover:border-[#d8b84d]/50 transition cursor-pointer flex flex-col md:flex-row md:items-center md:justify-between gap-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] dark:shadow-lg"
-              >
-                <div className="flex items-start gap-4">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#d8b84d]/15 text-[#B45309] dark:text-[#d8b84d] border border-[#d8b84d]/30">
-                    <FileText size={22} />
-                  </div>
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2.5">
-                      <span className="font-mono text-xs font-bold text-[#B45309] dark:text-[#d8b84d]">
-                        {dos.case_ref}
-                      </span>
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 dark:bg-emerald-950/70 border border-emerald-300 dark:border-emerald-500/30 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:text-emerald-300 shadow-sm">
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 dark:bg-emerald-400 animate-pulse" />
-                        {dos.status ? String(dos.status).replace(/_/g, " ") : "NOTICE ISSUED"}
-                      </span>
-                    </div>
-                    <strong className="block text-base font-bold text-slate-900 dark:text-white">{dos.title}</strong>
-                    <div className="flex flex-wrap gap-4 text-xs text-slate-600 dark:text-slate-300 pt-1">
-                      <span>Target VASP: <b className="text-[#B45309] dark:text-[#d8b84d]">{dos.target_vasp}</b></span>
-                      <span>Deposit Endpoint: <b className="font-mono text-slate-800 dark:text-slate-200">{dos.deposit_address?.slice(0, 14)}...</b></span>
-                      <span>Investigating Officer: <b className="text-slate-800 dark:text-slate-200">{dos.io_name}</b></span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between md:flex-col md:items-end gap-1.5 shrink-0 border-t md:border-t-0 border-slate-200 dark:border-white/5 pt-3 md:pt-0">
-                  <div className="text-lg font-bold text-slate-900 dark:text-white font-mono">
-                    {dos.total_traced_usdt?.toLocaleString()} USDT
-                  </div>
-                  <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                    ≈ ₹{dos.total_traced_inr?.toLocaleString()} INR
-                  </div>
-                  <span className="text-[11px] text-slate-400 dark:text-slate-500 font-mono">
-                    Issued: {new Date(dos.created_at).toLocaleDateString("en-IN")}
-                  </span>
-                </div>
+          {dossiers.length === 0 ? (
+            <div className="p-16 flex flex-col items-center justify-center text-center rounded-2xl border border-dashed border-slate-200 dark:border-white/10 bg-slate-50/50 dark:bg-black/20">
+              <div className="h-14 w-14 rounded-2xl bg-[#d8b84d]/10 border border-[#d8b84d]/20 flex items-center justify-center mb-4 text-[#d8b84d]">
+                <FileText size={28} />
               </div>
-            ))}
-          </div>
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 mb-1">No Statutory Dossiers Generated Yet</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mb-6 leading-relaxed">
+                When suspect wallets are traced to VASP deposit endpoints, you can generate certified Section 94 BNSS / Section 91 CrPC legal notices in 1 click from the node intelligence drawer.
+              </p>
+              {onNavigate && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate("workspace")}
+                  className="rolex-gold-btn inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-bold cursor-pointer"
+                >
+                  <span>Open Attribution Workbench</span>
+                  <ArrowRight size={14} className="text-[#150F00]" />
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {dossiers.map((dos) => (
+                <div
+                  key={dos.id}
+                  onClick={() => setSelectedEntity({
+                    address: dos.deposit_address,
+                    label: dos.title,
+                    balance: dos.total_traced_usdt,
+                    value_inr: dos.total_traced_inr,
+                    risk_score: 95,
+                    audit_notes: `Legal Dossier Ref: ${dos.case_ref}. Attributed to ${dos.target_vasp} with ${dos.confidence} confidence.`,
+                  })}
+                  className="rounded-3xl border border-slate-200/90 dark:border-white/15 bg-white/90 dark:bg-white/[0.03] p-6 hover:bg-white dark:hover:bg-white/[0.06] hover:border-[#d8b84d]/60 dark:hover:border-[#d8b84d]/50 transition cursor-pointer flex flex-col md:flex-row md:items-center md:justify-between gap-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] dark:shadow-lg"
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#d8b84d]/15 text-[#B45309] dark:text-[#d8b84d] border border-[#d8b84d]/30">
+                      <FileText size={22} />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2.5">
+                        <span className="font-mono text-xs font-bold text-[#B45309] dark:text-[#d8b84d]">
+                          {dos.case_ref}
+                        </span>
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 dark:bg-emerald-950/70 border border-emerald-300 dark:border-emerald-500/30 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:text-emerald-300 shadow-sm">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 dark:bg-emerald-400 animate-pulse" />
+                          {dos.status ? String(dos.status).replace(/_/g, " ") : "NOTICE ISSUED"}
+                        </span>
+                      </div>
+                      <strong className="block text-base font-bold text-slate-900 dark:text-white">{dos.title}</strong>
+                      <div className="flex flex-wrap gap-4 text-xs text-slate-600 dark:text-slate-300 pt-1">
+                        <span>Target VASP: <b className="text-[#B45309] dark:text-[#d8b84d]">{dos.target_vasp}</b></span>
+                        <span>Deposit Endpoint: <b className="font-mono text-slate-800 dark:text-slate-200">{dos.deposit_address?.slice(0, 14)}...</b></span>
+                        <span>Investigating Officer: <b className="text-slate-800 dark:text-slate-200">{dos.io_name}</b></span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between md:flex-col md:items-end gap-1.5 shrink-0 border-t md:border-t-0 border-slate-200 dark:border-white/5 pt-3 md:pt-0">
+                    <div className="text-lg font-bold text-slate-900 dark:text-white font-mono">
+                      {dos.total_traced_usdt?.toLocaleString()} USDT
+                    </div>
+                    <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                      ≈ ₹{dos.total_traced_inr?.toLocaleString()} INR
+                    </div>
+                    <span className="text-[11px] text-slate-400 dark:text-slate-500 font-mono">
+                      Issued: {new Date(dos.created_at).toLocaleDateString("en-IN")}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

@@ -14,7 +14,6 @@ import { NotificationsPage } from "./NotificationsPage.jsx";
 import { ProfilePage } from "./ProfilePage.jsx";
 import { NodeDetailDrawer } from "./NodeDetailDrawer.jsx";
 import { traceFunds, buildNotice, buildDossier } from "../lib/api.js";
-import { EVIDENCE_RECORDS } from "../lib/evidenceData.js";
 
 const emptyMetrics = [
   ["Traced volume", "--", "₹0 INR"],

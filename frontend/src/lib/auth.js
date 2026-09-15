@@ -26,14 +26,10 @@ export function authBackend() {
   return backendProbe;
 }
 
-async function live() {
+async function isLive() {
   const backend = await authBackend();
-  if (backend !== "live") {
-    throw new Error("Supabase authentication is unavailable. Configure Supabase and run supabase-setup.sql.");
-  }
-  return true;
+  return backend === "live";
 }
-
 
 const SESSION_KEY = "chakravyuh_officer_session";
 const USERS_KEY = "chakravyuh_mock_users";
@@ -41,6 +37,18 @@ const AUDIT_KEY = "chakravyuh_mock_audit";
 const DOSSIER_REVIEW_KEY = "chakravyuh_mock_reviews";
 
 const SEED_USERS = [
+  {
+    id: "u-user01",
+    email: "user01@gmail.com",
+    password: "Test@123",
+    full_name: "Officer User01",
+    badge_id: "I4C-IND-001",
+    station_code: "CYBER-PS-I4C-DELHI",
+    clearance: "Tier 1 - Unit Attribution",
+    role: "admin",
+    status: "active",
+    created_at: "2026-09-15T12:00:00Z",
+  },
   {
     id: "u-admin",
     email: "admin@chakravyuh.in",
@@ -99,6 +107,7 @@ const SEED_AUDIT = [
 
 /** Credentials shown on the sign-in screen so the demo is self-explanatory. */
 export const DEMO_CREDENTIALS = [
+  { label: "Officer User01", email: "user01@gmail.com", password: "Test@123" },
   { label: "Administrator", email: "admin@chakravyuh.in", password: "admin123" },
   { label: "Investigator", email: "r.iyer@police.gov.in", password: "demo1234" },
 ];
@@ -137,7 +146,7 @@ function strip(user) {
 
 // ── Authentication ──────────────────────────────────────────────────────
 export async function signUpOfficer({ email, password, fullName, badgeId, stationCode, clearance }) {
-  if (await live()) {
+  if (await isLive()) {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -172,7 +181,7 @@ export async function signUpOfficer({ email, password, fullName, badgeId, statio
 }
 
 export async function signInOfficer({ email, password }) {
-  if (await live()) {
+  if (await isLive()) {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
     await logAudit("account.signin", email, null);
@@ -191,7 +200,7 @@ export async function signInOfficer({ email, password }) {
 
 export async function signOutOfficer() {
   await logAudit("account.signout", null, null);
-  if (await live()) await supabase.auth.signOut();
+  if (await isLive()) await supabase.auth.signOut();
   try {
     writePref(SESSION_KEY, "");
   } catch {
@@ -200,7 +209,7 @@ export async function signOutOfficer() {
 }
 
 export async function getSessionUser() {
-  if (await live()) {
+  if (await isLive()) {
     const { data } = await supabase.auth.getUser();
     return data?.user ?? null;
   }
@@ -210,7 +219,7 @@ export async function getSessionUser() {
 export async function getMyProfile() {
   const session = await getSessionUser();
   if (!session) return null;
-  if (await live()) {
+  if (await isLive()) {
     const { data, error } = await supabase.from("profiles").select("*").eq("id", session.id).maybeSingle();
     if (error) return { id: session.id, email: session.email, role: "investigator", status: "active" };
     return data ?? { id: session.id, email: session.email, role: "investigator", status: "active" };
@@ -222,7 +231,7 @@ export async function getMyProfile() {
 export async function updateMyProfile(patch) {
   const session = await getSessionUser();
   if (!session) throw new Error("No active session.");
-  if (await live()) {
+  if (await isLive()) {
     const { error } = await supabase.from("profiles").update(patch).eq("id", session.id);
     if (error) throw error;
   } else {
@@ -234,7 +243,7 @@ export async function updateMyProfile(patch) {
 
 // ── Administration ──────────────────────────────────────────────────────
 export async function listProfiles() {
-  if (await live()) {
+  if (await isLive()) {
     const { data, error } = await supabase.from("profiles").select("*").order("created_at", { ascending: false });
     if (error) throw error;
     return data ?? [];
@@ -243,7 +252,7 @@ export async function listProfiles() {
 }
 
 export async function setProfileRole(id, role) {
-  if (await live()) {
+  if (await isLive()) {
     const { error } = await supabase.from("profiles").update({ role }).eq("id", id);
     if (error) throw error;
   } else {
@@ -253,7 +262,7 @@ export async function setProfileRole(id, role) {
 }
 
 export async function setProfileStatus(id, status) {
-  if (await live()) {
+  if (await isLive()) {
     const { error } = await supabase.from("profiles").update({ status }).eq("id", id);
     if (error) throw error;
   } else {
@@ -263,7 +272,7 @@ export async function setProfileStatus(id, status) {
 }
 
 export async function listAuditLog(limit = 100) {
-  if (await live()) {
+  if (await isLive()) {
     const { data, error } = await supabase
       .from("audit_log")
       .select("*")
@@ -277,7 +286,7 @@ export async function listAuditLog(limit = 100) {
 
 export async function logAudit(action, target, detail) {
   try {
-    if (await live()) {
+    if (await isLive()) {
       const { error } = await supabase.rpc("append_audit", {
         p_action: action,
         p_target: target ?? null,
@@ -308,7 +317,7 @@ export function dossierReviews() {
 }
 
 export async function reviewDossier(id, approvalStatus, note) {
-  if (await live()) {
+  if (await isLive()) {
     const { error } = await supabase.rpc("review_dossier", {
       p_dossier_id: id,
       p_approval_status: approvalStatus,
