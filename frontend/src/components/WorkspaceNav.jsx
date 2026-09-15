@@ -8,6 +8,7 @@ import {
 import { CommandPaletteModal } from "./CommandPaletteModal.jsx";
 import ChakravyuhLogo from "./ChakravyuhLogo.jsx";
 import { useTheme } from "../lib/ThemeContext.jsx";
+import { getMyProfile, signOutOfficer } from "../lib/auth.js";
 
 const workspaceLinks = [
   { id: "landing", label: "Home", icon: Home },
@@ -30,7 +31,6 @@ const notifications = [
 ];
 
 export function WorkspaceNav({ activeRoute, onNavigate, variant = "workspace" }) {
-  const { glassMode, toggleGlassMode } = useTheme();
   const isLanding = variant === "landing";
   const isAuth = variant === "auth";
   const navLinks = isLanding ? landingNavLinks : (isAuth ? [] : workspaceLinks);
@@ -40,9 +40,29 @@ export function WorkspaceNav({ activeRoute, onNavigate, variant = "workspace" })
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState("");
+  const [officerProfile, setOfficerProfile] = useState(null);
 
   const notifRef = useRef(null);
   const settingsRef = useRef(null);
+
+  // Dynamic Officer Info
+  useEffect(() => {
+    let alive = true;
+    getMyProfile().then((p) => {
+      if (alive && p) setOfficerProfile(p);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const officerName = officerProfile?.full_name || (officerProfile?.email ? officerProfile.email.split("@")[0] : "Officer User");
+  const officerInitials = officerName
+    .split(" ")
+    .filter(Boolean)
+    .map((n) => n[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase() || "OU";
+  const stationName = officerProfile?.station_code || "Cyber Crime PS · I4C Operations";
 
   // Live IST Clock
   useEffect(() => {
@@ -55,8 +75,7 @@ export function WorkspaceNav({ activeRoute, onNavigate, variant = "workspace" })
     return () => clearInterval(interval);
   }, []);
 
-  // Popover dismissal: pointer outside, focus moving away, or Escape. Focus
-  // matters as much as the click — tabbing out of a popover should close it.
+  // Popover dismissal
   useEffect(() => {
     const away = (e) => {
       if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false);
@@ -83,7 +102,17 @@ export function WorkspaceNav({ activeRoute, onNavigate, variant = "workspace" })
     };
   }, []);
 
-  // Render High-End Settings & Appearance Dropdown
+  const handleSignOut = async () => {
+    setSettingsOpen(false);
+    try {
+      await signOutOfficer();
+    } catch {
+      // proceed
+    }
+    window.location.href = isLanding ? "/login" : "/";
+  };
+
+  // Render High-End Settings & Profile Dropdown
   const renderSettingsDropdown = () => (
     <motion.div
       initial={{ opacity: 0, y: -10, scale: 0.96 }}
@@ -98,16 +127,16 @@ export function WorkspaceNav({ activeRoute, onNavigate, variant = "workspace" })
       <div className="p-4 border-b border-slate-200 dark:border-white/10 bg-slate-50/50 dark:bg-white/[0.02]">
         <div className="flex items-center gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#E5B83B]/30 to-emerald-900 border border-[#E5B83B]/50 text-[#FFE28A] font-extrabold text-sm shadow-md">
-            AS
+            {officerInitials}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <strong className="block text-xs font-bold text-slate-900 dark:text-white truncate">Inspector A. Sharma</strong>
+              <strong className="block text-xs font-bold text-slate-900 dark:text-white truncate">{officerName}</strong>
               <span className="shrink-0 rounded bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.2 text-[8px] font-bold text-emerald-700 dark:text-emerald-300">
-                VERIFIED
+                {officerProfile?.clearance ? "ACTIVE" : "VERIFIED"}
               </span>
             </div>
-            <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">Cyber Crime PS · I4C Operations</p>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{stationName}</p>
           </div>
         </div>
 
@@ -127,54 +156,10 @@ export function WorkspaceNav({ activeRoute, onNavigate, variant = "workspace" })
               onClick={() => { setSettingsOpen(false); onNavigate("profile"); }}
             >
               <ShieldCheck size={12} className="text-emerald-500" />
-              <span>Profile</span>
+              <span>Clearance</span>
             </button>
           </div>
         )}
-      </div>
-
-      {/* Settings Controls Section */}
-      <div className="p-3.5 space-y-3">
-        {/* Theme Mode Switcher */}
-        {/* Glassmorphism FX Switcher */}
-        <div className="flex items-center justify-between rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50/50 dark:bg-white/[0.02] p-2.5">
-          <div className="flex items-center gap-2.5">
-            <div className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${
-              glassMode 
-                ? "bg-[#E5B83B]/15 border-[#E5B83B]/50 text-[#B45309] dark:text-[#FFE28A] shadow-[0_0_12px_rgba(229,184,59,0.3)]" 
-                : "bg-slate-100 dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-400"
-            }`}>
-              <Layers size={15} />
-            </div>
-            <div>
-              <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                <span>Glassmorphism UI</span>
-                {glassMode && (
-                  <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.2 text-[8px] font-bold text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
-                    ACTIVE
-                  </span>
-                )}
-              </div>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400">Frosted translucency &amp; blur</p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={toggleGlassMode}
-            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-              glassMode ? "bg-[#006039] border-[#E5B83B]/60 shadow-[0_0_12px_rgba(16,185,129,0.4)]" : "bg-slate-300 dark:bg-slate-700"
-            }`}
-            role="switch"
-            aria-checked={glassMode}
-          >
-            <span
-              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
-                glassMode ? "translate-x-5 bg-[#FFE28A]" : "translate-x-0"
-              }`}
-            />
-          </button>
-        </div>
       </div>
 
       {/* Footer Navigation / Sign Out */}
@@ -182,7 +167,7 @@ export function WorkspaceNav({ activeRoute, onNavigate, variant = "workspace" })
         <button
           type="button"
           className="w-full flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition cursor-pointer"
-          onClick={() => { setSettingsOpen(false); onNavigate(isLanding ? "login" : "landing"); }}
+          onClick={handleSignOut}
         >
           <LogOut size={13} />
           <span>{isLanding ? "Access Officer Login" : "Lock Session / Sign Out"}</span>
@@ -432,8 +417,8 @@ export function WorkspaceNav({ activeRoute, onNavigate, variant = "workspace" })
                     aria-expanded={settingsOpen}
                     onClick={() => { setSettingsOpen(o => !o); setNotifOpen(false); }}
                   >
-                    <div className="cv-avatar-tile">AS</div>
-                    <span className="cv-user-label hidden sm:inline-block">Insp. A. Sharma</span>
+                    <div className="cv-avatar-tile">{officerInitials}</div>
+                    <span className="cv-user-label hidden sm:inline-block truncate max-w-[140px]">{officerName}</span>
                     <ChevronDown size={12} strokeWidth={2.5} className="text-slate-400" />
                   </motion.button>
 

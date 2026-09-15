@@ -7,12 +7,22 @@ import {
   Layers, Shield, ShieldAlert, Sparkles, Wallet, X, Zap 
 } from "lucide-react";
 import { addToWatchlist, saveDossier } from "../lib/supabase.js";
+import { getMyProfile } from "../lib/auth.js";
 
 export function NodeDetailDrawer({ entity, onClose, onWatchlistUpdated, onDossierUpdated }) {
   const [copied, setCopied] = useState(false);
   const [noticeGenerated, setNoticeGenerated] = useState(false);
   const [watchlistAdded, setWatchlistAdded] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
+  const [officerProfile, setOfficerProfile] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    getMyProfile().then((p) => {
+      if (alive && p) setOfficerProfile(p);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -92,10 +102,7 @@ Traced Value: ${balance} USDT (approx ₹${inrValue.toLocaleString()} INR)
 Attribution Hash: ${txHash}
 Risk Classification: ${entityType} (${riskScore}/100 Critical)
 
-Findings:
-This entity has been verified under machine-assisted peeling graph analysis as a direct recipient/mule node in the illicit fund dispersion pipeline.
-
-Investigating Officer: Inspector A. Sharma, Cyber Crime PS - I4C`;
+Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? officerProfile.email.split("@")[0] : "Officer User")}, ${officerProfile?.station_code || "Cyber Crime PS - I4C"}`;
 
       const blob = new Blob([noticeText], { type: "text/plain;charset=utf-8" });
       const url = URL.createObjectURL(blob);
