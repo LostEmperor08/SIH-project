@@ -1,0 +1,356 @@
+{
+  "nodes": [
+    {
+      "id": "eth:0x0c46f38ae77fd4c3c7810dfde5d53cede608764f",
+      "type": "wallet",
+      "data": {
+        "address": "0x0c46f38ae77fd4c3c7810dfde5d53cede608764f",
+        "chain": "eth",
+        "label": "0x0c46f3\u2026764f",
+        "hop": 1,
+        "isTarget": false,
+        "entity": "unknown",
+        "vaspName": null,
+        "sanctioned": false,
+        "riskScore": null,
+        "riskBand": null,
+        "narrative": null,
+        "typologies": [],
+        "recommendedActions": [],
+        "explanation": [],
+        "hopsToExchange": null,
+        "hopsToSanctioned": null,
+        "inUsd": 0.0,
+        "outUsd": 0.4,
+        "degree": 1,
+        "explorerUrl": "https://eth.blockscout.com/address/0x0c46f38ae77fd4c3c7810dfde5d53cede608764f"
+      }
+    },
+    {
+      "id": "eth:0x20148ab7597a6ed17129f4ecac2bcbb2c8cbff0f",
+      "type": "target",
+      "data": {
+        "address": "0x20148ab7597a6ed17129f4ecac2bcbb2c8cbff0f",
+        "chain": "eth",
+        "label": "0x20148a\u2026ff0f",
+        "hop": 0,
+        "isTarget": true,
+        "entity": "unknown",
+        "vaspName": null,
+        "sanctioned": false,
+        "riskScore": null,
+        "riskBand": null,
+        "narrative": null,
+        "typologies": [],
+        "recommendedActions": [],
+        "explanation": [],
+        "hopsToExchange": null,
+        "hopsToSanctioned": null,
+        "inUsd": 199.66,
+        "outUsd": 0.0,
+        "degree": 2,
+        "explorerUrl": "https://eth.blockscout.com/address/0x20148ab7597a6ed17129f4ecac2bcbb2c8cbff0f"
+      }
+    },
+    {
+      "id": "eth:0x2767ae7e0c205425a7b7f7583c512513c527f482",
+      "type": "wallet",
+      "data": {
+        "address": "0x2767ae7e0c205425a7b7f7583c512513c527f482",
+        "chain": "eth",
+        "label": "0x2767ae\u2026f482",
+        "hop": 1,
+        "isTarget": false,
+        "entity": "unknown",
+        "vaspName": null,
+        "sanctioned": false,
+        "riskScore": null,
+        "riskBand": null,
+        "narrative": null,
+        "typologies": [],
+        "recommendedActions": [],
+        "explanation": [],
+        "hopsToExchange": null,
+        "hopsToSanctioned": null,
+        "inUsd": 0.0,
+        "outUsd": 0.0,
+        "degree": 2,
+        "explorerUrl": "https://eth.blockscout.com/address/0x2767ae7e0c205425a7b7f7583c512513c527f482"
+      }
+    },
+    {
+      "id": "eth:0x5eef5946ad78e614bb3ee7b9ed1097c517ae97f7",
+      "type": "wallet",
+      "data": {
+        "address": "0x5eef5946ad78e614bb3ee7b9ed1097c517ae97f7",
+        "chain": "eth",
+        "label": "0x5eef59\u202697f7",
+        "hop": 1,
+        "isTarget": false,
+        "entity": "unknown",
+        "vaspName": null,
+        "sanctioned": false,
+        "riskScore": null,
+        "riskBand": null,
+        "narrative": null,
+        "typologies": [],
+        "recommendedActions": [],
+        "explanation": [],
+        "hopsToExchange": null,
+        "hopsToSanctioned": null,
+        "inUsd": 0.0,
+        "outUsd": 0.0,
+        "degree": 1,
+        "explorerUrl": "https://eth.blockscout.com/address/0x5eef5946ad78e614bb3ee7b9ed1097c517ae97f7"
+      }
+    },
+    {
+      "id": "eth:0x935d2e470284fb536227a76a723f96a94efae6a9",
+      "type": "wallet",
+      "data": {
+        "address": "0x935d2e470284fb536227a76a723f96a94efae6a9",
+        "chain": "eth",
+        "label": "0x935d2e\u2026e6a9",
+        "hop": 1,
+        "isTarget": false,
+        "entity": "unknown",
+        "vaspName": null,
+        "sanctioned": false,
+        "riskScore": null,
+        "riskBand": null,
+        "narrative": null,
+        "typologies": [],
+        "recommendedActions": [],
+        "explanation": [],
+        "hopsToExchange": null,
+        "hopsToSanctioned": null,
+        "inUsd": 0.0,
+        "outUsd": 0.78,
+        "degree": 1,
+        "explorerUrl": "https://eth.blockscout.com/address/0x935d2e470284fb536227a76a723f96a94efae6a9"
+      }
+    },
+    {
+      "id": "eth:0xc8a7a990d874d6e6fa6cc2544f77fe61367df3db",
+      "type": "target",
+      "data": {
+        "address": "0xc8a7a990d874d6e6fa6cc2544f77fe61367df3db",
+        "chain": "eth",
+        "label": "0xc8a7a9\u2026f3db",
+        "hop": 0,
+        "isTarget": true,
+        "entity": "unknown",
+        "vaspName": null,
+        "sanctioned": false,
+        "riskScore": null,
+        "riskBand": null,
+        "narrative": null,
+        "typologies": [],
+        "recommendedActions": [],
+        "explanation": [],
+        "hopsToExchange": null,
+        "hopsToSanctioned": null,
+        "inUsd": 1.18,
+        "outUsd": 0.66,
+        "degree": 5,
+        "explorerUrl": "https://eth.blockscout.com/address/0xc8a7a990d874d6e6fa6cc2544f77fe61367df3db"
+      }
+    },
+    {
+      "id": "eth:0xe3b4c6dcf32b2617780da01689f01ed826a9ff83",
+      "type": "wallet",
+      "data": {
+        "address": "0xe3b4c6dcf32b2617780da01689f01ed826a9ff83",
+        "chain": "eth",
+        "label": "0xe3b4c6\u2026ff83",
+        "hop": 1,
+        "isTarget": false,
+        "entity": "unknown",
+        "vaspName": null,
+        "sanctioned": false,
+        "riskScore": null,
+        "riskBand": null,
+        "narrative": null,
+        "typologies": [],
+        "recommendedActions": [],
+        "explanation": [],
+        "hopsToExchange": null,
+        "hopsToSanctioned": null,
+        "inUsd": 0.66,
+        "outUsd": 0.0,
+        "degree": 1,
+        "explorerUrl": "https://eth.blockscout.com/address/0xe3b4c6dcf32b2617780da01689f01ed826a9ff83"
+      }
+    },
+    {
+      "id": "eth:0xedd1ae45b7727fe87bb924abbcbf7a662475f17d",
+      "type": "wallet",
+      "data": {
+        "address": "0xedd1ae45b7727fe87bb924abbcbf7a662475f17d",
+        "chain": "eth",
+        "label": "0xedd1ae\u2026f17d",
+        "hop": 1,
+        "isTarget": false,
+        "entity": "unknown",
+        "vaspName": null,
+        "sanctioned": false,
+        "riskScore": null,
+        "riskBand": null,
+        "narrative": null,
+        "typologies": [],
+        "recommendedActions": [],
+        "explanation": [],
+        "hopsToExchange": null,
+        "hopsToSanctioned": null,
+        "inUsd": 0.0,
+        "outUsd": 199.66,
+        "degree": 1,
+        "explorerUrl": "https://eth.blockscout.com/address/0xedd1ae45b7727fe87bb924abbcbf7a662475f17d"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e0",
+      "source": "eth:0xc8a7a990d874d6e6fa6cc2544f77fe61367df3db",
+      "target": "eth:0xe3b4c6dcf32b2617780da01689f01ed826a9ff83",
+      "label": "2 tx",
+      "animated": false,
+      "data": {
+        "chain": "eth",
+        "valueUsd": 0.66,
+        "txCount": 2,
+        "firstSeen": "2026-09-09T05:33:35Z",
+        "lastSeen": "2026-09-09T05:34:35Z",
+        "txHashes": [
+          "0xd44e125f",
+          "0x7db17de7"
+        ],
+        "explorerUrls": [
+          "https://eth.blockscout.com/tx/0xd44e125f",
+          "https://eth.blockscout.com/tx/0x7db17de7"
+        ]
+      }
+    },
+    {
+      "id": "e1",
+      "source": "eth:0x935d2e470284fb536227a76a723f96a94efae6a9",
+      "target": "eth:0xc8a7a990d874d6e6fa6cc2544f77fe61367df3db",
+      "label": "1 tx",
+      "animated": false,
+      "data": {
+        "chain": "eth",
+        "valueUsd": 0.78,
+        "txCount": 1,
+        "firstSeen": "2026-09-09T05:28:35Z",
+        "lastSeen": "2026-09-09T05:28:35Z",
+        "txHashes": [
+          "0xdbcf3267"
+        ],
+        "explorerUrls": [
+          "https://eth.blockscout.com/tx/0xdbcf3267"
+        ]
+      }
+    },
+    {
+      "id": "e2",
+      "source": "eth:0x5eef5946ad78e614bb3ee7b9ed1097c517ae97f7",
+      "target": "eth:0xc8a7a990d874d6e6fa6cc2544f77fe61367df3db",
+      "label": "1 tx",
+      "animated": false,
+      "data": {
+        "chain": "eth",
+        "valueUsd": 0.0,
+        "txCount": 1,
+        "firstSeen": "2026-09-09T05:34:23Z",
+        "lastSeen": "2026-09-09T05:34:23Z",
+        "txHashes": [
+          "0x578bbec9"
+        ],
+        "explorerUrls": [
+          "https://eth.blockscout.com/tx/0x578bbec9"
+        ]
+      }
+    },
+    {
+      "id": "e3",
+      "source": "eth:0x2767ae7e0c205425a7b7f7583c512513c527f482",
+      "target": "eth:0xc8a7a990d874d6e6fa6cc2544f77fe61367df3db",
+      "label": "1 tx",
+      "animated": false,
+      "data": {
+        "chain": "eth",
+        "valueUsd": 0.0,
+        "txCount": 1,
+        "firstSeen": "2026-08-09T00:23:35Z",
+        "lastSeen": "2026-08-09T00:23:35Z",
+        "txHashes": [
+          "0xee771c0c"
+        ],
+        "explorerUrls": [
+          "https://eth.blockscout.com/tx/0xee771c0c"
+        ]
+      }
+    },
+    {
+      "id": "e4",
+      "source": "eth:0x0c46f38ae77fd4c3c7810dfde5d53cede608764f",
+      "target": "eth:0xc8a7a990d874d6e6fa6cc2544f77fe61367df3db",
+      "label": "1 tx",
+      "animated": false,
+      "data": {
+        "chain": "eth",
+        "valueUsd": 0.4,
+        "txCount": 1,
+        "firstSeen": "2026-08-03T20:06:47Z",
+        "lastSeen": "2026-08-03T20:06:47Z",
+        "txHashes": [
+          "0xdcfa0128"
+        ],
+        "explorerUrls": [
+          "https://eth.blockscout.com/tx/0xdcfa0128"
+        ]
+      }
+    },
+    {
+      "id": "e5",
+      "source": "eth:0x2767ae7e0c205425a7b7f7583c512513c527f482",
+      "target": "eth:0x20148ab7597a6ed17129f4ecac2bcbb2c8cbff0f",
+      "label": "1 tx",
+      "animated": false,
+      "data": {
+        "chain": "eth",
+        "valueUsd": 0.0,
+        "txCount": 1,
+        "firstSeen": "2026-08-08T17:41:23Z",
+        "lastSeen": "2026-08-08T17:41:23Z",
+        "txHashes": [
+          "0x927e620b"
+        ],
+        "explorerUrls": [
+          "https://eth.blockscout.com/tx/0x927e620b"
+        ]
+      }
+    },
+    {
+      "id": "e6",
+      "source": "eth:0xedd1ae45b7727fe87bb924abbcbf7a662475f17d",
+      "target": "eth:0x20148ab7597a6ed17129f4ecac2bcbb2c8cbff0f",
+      "label": "$200",
+      "animated": false,
+      "data": {
+        "chain": "eth",
+        "valueUsd": 199.66,
+        "txCount": 1,
+        "firstSeen": "2026-06-09T21:20:47Z",
+        "lastSeen": "2026-06-09T21:20:47Z",
+        "txHashes": [
+          "0x43aefb14"
+        ],
+        "explorerUrls": [
+          "https://eth.blockscout.com/tx/0x43aefb14"
+        ]
+      }
+    }
+  ]
+}

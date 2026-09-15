@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+node_modules/
+.env
+.env.local
+aiml/artifacts/
+aiml/reports/*.json
+aiml/data/
+*.log
+.DS_Store
+dist/
+build/

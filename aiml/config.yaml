@@ -1,0 +1,82 @@
+# =====================================================================
+# Chakravyuh SETU — AI/ML configuration
+# =====================================================================
+
+paths:
+  data_dir: data
+  elliptic_dir: data/elliptic++          # see README for download
+  artifacts_dir: artifacts               # trained models land here
+  reports_dir: reports
+
+supabase:
+  # read from env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+  chains: [btc, eth, polygon, tron, bsc]
+  lookback_days: 180
+  min_tx_per_wallet: 2
+
+training:
+  random_state: 42
+  # Temporal split, NOT random. Fraud evolves; a random split leaks the
+  # future into the training set and inflates every metric you report.
+  test_fraction: 0.2
+  val_fraction: 0.1
+  early_stopping_rounds: 100
+
+illicit:
+  objective: binary
+  n_estimators: 1200
+  learning_rate: 0.03
+  num_leaves: 64
+  min_child_samples: 40
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_lambda: 1.0
+  # Elliptic++ wallets are ~5% illicit — weight rather than resample so
+  # the calibration curve stays usable for risk banding.
+  scale_pos_weight: auto
+  decision_threshold: 0.5                # re-tuned on validation for F1
+
+vasp:
+  objective: multiclass
+  classes: [exchange, mixer, bridge, gambling, darknet, merchant, p2p, unknown]
+  n_estimators: 800
+  learning_rate: 0.05
+  num_leaves: 48
+  min_confidence: 0.55                   # below this we return 'unknown'
+
+typology:
+  # multi-label: a wallet can be both ransomware and darknet
+  labels: [investment_scam, task_fraud, sextortion, ransomware, phishing, darknet, mule]
+  n_estimators: 500
+  learning_rate: 0.05
+  min_confidence: 0.45
+
+anomaly:
+  contamination: 0.03
+  n_estimators: 300
+  max_samples: 0.7
+
+gnn:
+  enabled: auto                          # auto | true | false
+  hidden_dim: 128
+  num_layers: 3
+  dropout: 0.3
+  epochs: 60
+  lr: 0.005
+  neighbour_sample: [15, 10, 5]
+
+risk_bands:
+  critical: 80
+  high: 60
+  medium: 35
+
+# Weight given to each model when fusing into the final 0-100 risk score.
+# Deterministic rules keep a floor: a live OFAC hit must never be talked
+# down by a model that happens to disagree.
+fusion:
+  weights:
+    rules: 0.35
+    illicit_model: 0.35
+    anomaly: 0.15
+    graph: 0.15
+  sanction_floor: 90                     # OFAC direct hit -> at least this

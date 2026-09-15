@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en" class="dark glass-mode-active" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Chakravyuh SETU — Real-Time Crypto Fraud Attribution</title>
+    <meta name="description" content="Trace illicit crypto flows hop by hop, identify the receiving exchange, and generate court-ready statutory notices." />
+
+    <!-- Installable on Android and iOS -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#06180f" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Chakravyuh" />
+    <link rel="apple-touch-icon" href="/app-icon-180.png" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <style>
+      /* Painted before the bundle arrives, so a slow or failed script never
+         leaves the page on a white ground. */
+      html { background: #06180f; color-scheme: dark; }
+      body { margin: 0; background: #06180f; color: #f4f7ef; -webkit-text-size-adjust: 100%; }
+      #root { min-height: 100dvh; }
+    </style>
+  </head>
+  <body class="dark glass-mode-active">
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "Chakravyuh SETU — Crypto Fraud Attribution",
+  "short_name": "Chakravyuh",
+  "description": "Trace illicit crypto flows hop by hop, identify the receiving exchange, and generate court-ready statutory notices.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#06180f",
+  "theme_color": "#06180f",
+  "categories": ["government", "security", "productivity"],
+  "icons": [
+    { "src": "/app-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/app-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/app-icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Investigation Dashboard", "url": "/dashboard" },
+    { "name": "Evidence Ledger", "url": "/dashboard?tab=evidence" }
+  ]
+}
