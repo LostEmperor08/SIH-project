@@ -68,7 +68,31 @@ function AnimatedRoutes() {
           }
         />
         <Route
+          path="/auth"
+          element={
+            <motion.div variants={pageVariants} initial="initial" animate="animate" exit="exit" className="w-full">
+              <AuthPage initialMode="login" />
+            </motion.div>
+          }
+        />
+        <Route
+          path="/signin"
+          element={
+            <motion.div variants={pageVariants} initial="initial" animate="animate" exit="exit" className="w-full">
+              <AuthPage initialMode="login" />
+            </motion.div>
+          }
+        />
+        <Route
           path="/signup"
+          element={
+            <motion.div variants={pageVariants} initial="initial" animate="animate" exit="exit" className="w-full">
+              <AuthPage initialMode="signup" />
+            </motion.div>
+          }
+        />
+        <Route
+          path="/register"
           element={
             <motion.div variants={pageVariants} initial="initial" animate="animate" exit="exit" className="w-full">
               <AuthPage initialMode="signup" />
