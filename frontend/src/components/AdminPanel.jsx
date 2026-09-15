@@ -1,13 +1,29 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  CheckCircle2, ChevronRight, FileText, Loader2, RefreshCw,
-  ScrollText, ShieldAlert, ShieldCheck, Users, XCircle,
+  CheckCircle2, ChevronRight, FileText, Loader2, Plus, RefreshCw,
+  ScrollText, ShieldAlert, ShieldCheck, UserPlus, Users, X, XCircle,
 } from "lucide-react";
-import { listProfiles, setProfileRole, setProfileStatus, listAuditLog, reviewDossier, dossierReviews } from "../lib/auth.js";
+import {
+  listProfiles,
+  setProfileRole,
+  setProfileStatus,
+  listAuditLog,
+  reviewDossier,
+  dossierReviews,
+  signUpOfficer,
+} from "../lib/auth.js";
 import { fetchDossiers } from "../lib/supabase.js";
 
 const ROLES = ["admin", "investigator", "viewer"];
 const STATUSES = ["active", "pending", "suspended"];
+
+const STATIONS = [
+  "CYBER-PS-I4C-DELHI",
+  "CID-CYBER-MUMBAI",
+  "FIU-IND-NODAL-CELL",
+  "STF-CYBER-BENGALURU",
+  "HQ-CYBER-SECURITY-CELL",
+];
 
 const TABS = [
   { id: "users", label: "Users & roles", icon: Users },
@@ -30,6 +46,17 @@ export function AdminPanel({ profile }) {
   const [audit, setAudit] = useState([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+
+  // New Officer Account Modal State
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [newUserName, setNewUserName] = useState("");
+  const [newUserBadge, setNewUserBadge] = useState("");
+  const [newUserStation, setNewUserStation] = useState(STATIONS[0]);
+  const [newUserRole, setNewUserRole] = useState("investigator");
+  const [addingUser, setAddingUser] = useState(false);
 
   const isAdmin = profile?.role === "admin";
 
@@ -60,10 +87,44 @@ export function AdminPanel({ profile }) {
 
   async function mutate(fn) {
     try {
+      setError(null);
       await fn();
       await load();
     } catch (err) {
-      setError(err?.message ?? "Change failed");
+      setError(err?.message ?? "Action failed");
+    }
+  }
+
+  async function handleCreateOfficer(e) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    setAddingUser(true);
+    try {
+      const created = await signUpOfficer({
+        email: newUserEmail,
+        password: newUserPassword,
+        fullName: newUserName,
+        badgeId: newUserBadge,
+        stationCode: newUserStation,
+        clearance: newUserRole === "admin" ? "Tier 3 - Cross-Border / FIU" : "Tier 1 - Unit Attribution",
+      });
+
+      if (created?.user?.id && newUserRole !== "investigator") {
+        await setProfileRole(created.user.id, newUserRole);
+      }
+
+      setSuccess(`Officer account created successfully for ${newUserEmail}`);
+      setShowAddUser(false);
+      setNewUserEmail("");
+      setNewUserPassword("");
+      setNewUserName("");
+      setNewUserBadge("");
+      await load();
+    } catch (err) {
+      setError(err?.message ?? "Failed to create officer account in Supabase");
+    } finally {
+      setAddingUser(false);
     }
   }
 
@@ -73,8 +134,8 @@ export function AdminPanel({ profile }) {
         <ShieldAlert size={26} className="mx-auto admin-accent" />
         <h2 className="mt-3 text-lg font-extrabold">Administrator clearance required</h2>
         <p className="mt-2 text-xs admin-muted">
-          Your account is signed in as <strong>{profile?.role ?? "guest"}</strong>. Ask an existing administrator to
-          raise your role on the Users &amp; roles screen.
+          Your account is signed in as <strong>{profile?.role ?? "guest"}</strong> ({profile?.email ?? "No email"}). Ask an existing administrator to
+          raise your role in the Supabase <code>profiles</code> table.
         </p>
       </div>
     );
@@ -85,21 +146,154 @@ export function AdminPanel({ profile }) {
       <header className={`${panel} flex flex-wrap items-center justify-between gap-4 p-5`}>
         <div>
           <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider admin-accent">
-            <ShieldCheck size={14} /> Administration
+            <ShieldCheck size={14} /> Administration · Supabase Connected
           </div>
-          <h1 className="mt-1 text-xl font-extrabold tracking-tight">Command console</h1>
+          <h1 className="mt-1 text-xl font-extrabold tracking-tight">Command Console</h1>
           <p className="mt-1 text-xs admin-muted">
-            {users.length} accounts · {pendingCount} dossiers awaiting review · {audit.length} logged actions
+            {users.length} live accounts · {pendingCount} dossiers awaiting review · {audit.length} logged actions
           </p>
         </div>
-        <button type="button" onClick={load} className="admin-btn flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold">
-          {busy ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          {tab === "users" && (
+            <button
+              type="button"
+              onClick={() => setShowAddUser(true)}
+              className="cv-btn-gold flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold"
+            >
+              <UserPlus size={14} /> Add Officer
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={load}
+            className="admin-btn flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold"
+          >
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Refresh
+          </button>
+        </div>
       </header>
 
       {error && (
         <div className="admin-warn rounded-xl p-3 text-xs font-semibold">
-          {error} — if this mentions a missing table, run <code>supabase-setup.sql</code> in your Supabase SQL editor.
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs font-semibold text-emerald-400">
+          {success}
+        </div>
+      )}
+
+      {/* ── Provision Officer Modal ── */}
+      {showAddUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className={`${panel} w-full max-w-lg border border-white/10 p-6 shadow-2xl`}>
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2 text-sm font-extrabold">
+                <UserPlus size={16} className="text-amber-400" /> Provision Officer in Supabase
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddUser(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateOfficer} className="mt-4 space-y-3.5">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-300">Officer Full Name</label>
+                <input
+                  required
+                  type="text"
+                  placeholder="Inspector A. Sharma"
+                  value={newUserName}
+                  onChange={(e) => setNewUserName(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300">Badge / Service ID</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="I4C-IND-88219"
+                    value={newUserBadge}
+                    onChange={(e) => setNewUserBadge(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300">Station / Unit</label>
+                  <select
+                    value={newUserStation}
+                    onChange={(e) => setNewUserStation(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none focus:border-amber-400"
+                  >
+                    {STATIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-300">Email Address</label>
+                <input
+                  required
+                  type="email"
+                  placeholder="officer@agency.gov.in"
+                  value={newUserEmail}
+                  onChange={(e) => setNewUserEmail(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300">Temporary Password</label>
+                  <input
+                    required
+                    minLength={6}
+                    type="password"
+                    placeholder="Min 6 characters"
+                    value={newUserPassword}
+                    onChange={(e) => setNewUserPassword(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300">Role</label>
+                  <select
+                    value={newUserRole}
+                    onChange={(e) => setNewUserRole(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none focus:border-amber-400"
+                  >
+                    {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-5 flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddUser(false)}
+                  className="rounded-xl border border-white/10 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-white/5"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addingUser}
+                  className="cv-btn-gold rounded-xl px-4 py-2 text-xs font-bold"
+                >
+                  {addingUser ? "Provisioning in Supabase…" : "Create & Provision"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
@@ -132,7 +326,7 @@ export function AdminPanel({ profile }) {
               {users.map((u) => (
                 <tr key={u.id} className="admin-tr">
                   <td className={cell}>
-                    <div className="font-bold">{u.full_name ?? "—"}</div>
+                    <div className="font-bold text-white">{u.full_name || u.email?.split("@")[0] || "Officer"}</div>
                     <div className="font-mono text-[11px] admin-muted">{u.email}</div>
                   </td>
                   <td className={`${cell} font-mono text-[11px]`}>
@@ -152,7 +346,12 @@ export function AdminPanel({ profile }) {
                     <div className="flex items-center gap-2">
                       <Pill tone={u.status}>{u.status}</Pill>
                       {STATUSES.filter((s) => s !== u.status).map((s) => (
-                        <button key={s} type="button" onClick={() => mutate(() => setProfileStatus(u.id, s))} className="admin-btn px-2 py-1 text-[10px] font-bold">
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => mutate(() => setProfileStatus(u.id, s))}
+                          className="admin-btn px-2 py-1 text-[10px] font-bold"
+                        >
                           Set {s}
                         </button>
                       ))}
@@ -161,7 +360,11 @@ export function AdminPanel({ profile }) {
                 </tr>
               ))}
               {!users.length && !busy && (
-                <tr><td className={`${cell} text-center admin-muted`} colSpan={4}>No accounts yet. The profiles table fills as officers register.</td></tr>
+                <tr>
+                  <td className={`${cell} text-center admin-muted py-8`} colSpan={4}>
+                    No accounts found in Supabase <code>profiles</code> table. Create one using "Add Officer" above or via sign up.
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
@@ -188,10 +391,18 @@ export function AdminPanel({ profile }) {
                   <div><dt className="font-bold">Officer</dt><dd>{d.io_name}</dd></div>
                 </dl>
                 <div className="mt-4 flex gap-2">
-                  <button type="button" onClick={() => mutate(() => reviewDossier(d.id, "approved"))} className="admin-approve flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => mutate(() => reviewDossier(d.id, "approved"))}
+                    className="admin-approve flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold"
+                  >
                     <CheckCircle2 size={14} /> Approve
                   </button>
-                  <button type="button" onClick={() => mutate(() => reviewDossier(d.id, "rejected"))} className="admin-reject flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => mutate(() => reviewDossier(d.id, "rejected"))}
+                    className="admin-reject flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold"
+                  >
                     <XCircle size={14} /> Reject
                   </button>
                 </div>
