@@ -37,12 +37,12 @@ export function LandingPage() {
   const pts = useMemo(() => [[188, 417], [424, 293], [698, 302], [640, 581], [456, 751], [723, 430]], []);
 
   const kfs = useMemo(() => [
-    { at: 0, floor: 0, name: "THE COMPROMISED SEED" },
-    { at: 12, floor: 0, name: "PEEL CHAIN SPLINTER" },
-    { at: 24, floor: 0.10, name: "OBFUSCATION LABYRINTH" },
-    { at: 38, floor: 0.22, name: "MULTI-HOP GRAPH" },
-    { at: 51, floor: 0.28, name: "EXCHANGE FUNNEL" },
-    { at: 64, floor: 0.34, name: "STATUTORY DOSSIER" },
+    { at: 0, floor: 0, name: "REPORTED SUSPECT WALLET" },
+    { at: 12, floor: 0, name: "PEEL CHAIN PATTERN" },
+    { at: 24, floor: 0.10, name: "COMPLEX FUND MOVEMENT" },
+    { at: 38, floor: 0.22, name: "MONEY TRAIL GRAPH" },
+    { at: 51, floor: 0.28, name: "EXCHANGE IDENTIFIED" },
+    { at: 64, floor: 0.34, name: "OFFICIAL REPORT GENERATED" },
     { at: 77, floor: 0.42, name: "I4C COMMAND CENTER" },
     { at: 88, floor: 0.58, name: "NATIONAL CYBER GRID" },
     { at: 96, floor: 1, name: "ORBITAL CHAKRAVYUH" }
@@ -214,14 +214,14 @@ export function LandingPage() {
     textColors[`t${i}`] = on ? (amber ? (isLight ? "#B45309" : "#FDE68A") : (isLight ? "#059669" : "#D6FBEA")) : (isLight ? "#94A3B8" : "#5C646D");
   });
 
-  const hopStage = p < 18 ? "INGEST" : p < 42 ? "PEEL CHAIN" : p < 66 ? "MIXER TRAVERSAL" : "VASP CLUSTER IDENTIFIED";
+  const hopStage = p < 18 ? "RECEIVE COMPLAINT" : p < 42 ? "PEEL CHAIN" : p < 66 ? "FOLLOW MONEY" : "EXCHANGE IDENTIFIED";
   const phase =
-    tp < thresh[1] ? "INGEST · NCRP COMPLAINT 0x7b51…ped1" :
+    tp < thresh[1] ? "COMPLAINT RECEIVED · NCRP WALLET 0x7b51…ped1" :
     tp < thresh[2] ? "HOP 01 · PEEL CHAIN DETECTED" :
     tp < thresh[3] ? "HOP 02 · MIXER PASS-THROUGH" :
-    tp < thresh[4] ? "HOP 03 · CROSS-CHAIN BRIDGE TRC-20" :
-    tp < 99.4 ? "HOP 04 · MULE CLUSTER ×14 RESOLVING" :
-    "VASP IDENTIFIED · TIER-1 EXCHANGE — HOT WALLET 4";
+    tp < thresh[4] ? "HOP 03 · FUNDS MOVED TO ANOTHER NETWORK (TRC-20)" :
+    tp < 99.4 ? "HOP 04 · HIGH-RISK WALLET GROUP RESOLVING" :
+    "EXCHANGE IDENTIFIED · TIER-1 EXCHANGE — DEPOSIT WALLET 4";
 
   const kfi = kfs.reduce((acc, k, i) => (p >= k.at - 6 ? i : acc), 0);
   const timeVal = (p / 100) * 540;

@@ -12,10 +12,10 @@ import { getMyProfile, signOutOfficer } from "../lib/auth.js";
 
 const workspaceLinks = [
   { id: "landing", label: "Home", icon: Home },
-  { id: "workspace", label: "Live Attribution", icon: Activity },
+  { id: "workspace", label: "Money Trail", icon: Activity },
   { id: "watchlist", label: "Watchlist", icon: Shield },
-  { id: "dossier", label: "Legal Dossier", icon: FileText },
-  { id: "evidence", label: "Evidence Ledger", icon: BookOpen },
+  { id: "dossier", label: "Section 91 Notice", icon: FileText },
+  { id: "evidence", label: "Investigation Records", icon: BookOpen },
 ];
 
 const landingNavLinks = [

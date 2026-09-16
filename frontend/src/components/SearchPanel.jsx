@@ -73,9 +73,9 @@ export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
       <div className="mb-4 flex items-start justify-between">
         <div>
           <div className="mb-1.5 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-[#d8b84d]">
-            <Activity size={13} className="text-[#d8b84d]" /> Live investigation ingestion
+            <Activity size={13} className="text-[#d8b84d]" /> Live Investigation Search
           </div>
-          <h2 className="text-lg font-bold text-slate-100">Ingest suspect wallet</h2>
+          <h2 className="text-lg font-bold text-slate-100">Wallet Under Investigation</h2>
         </div>
         <div className="flex items-center gap-2">
           {loading && (
@@ -89,7 +89,7 @@ export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
             </span>
           )}
           <span className="status-dot rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
-            Node synced
+            Connected to Blockchain
           </span>
         </div>
       </div>
@@ -97,7 +97,7 @@ export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
       {/* Network / Chain Option Chips Above Input (With Real-time Highlight) */}
       <div className="mb-4">
         <div className="flex items-center justify-between mb-2 text-[11px] text-slate-400">
-          <span>Target Network / Chain Heuristics</span>
+          <span>Select Network / Blockchain</span>
           <span className="text-[10px] text-slate-500">Auto-matches address format</span>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -136,7 +136,7 @@ export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
       {/* Address Input */}
       <div>
         <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">
-          Wallet address (TRON, EVM hex, BTC, or Case Entity ID)
+          Wallet address (TRON, EVM, BTC)
         </label>
         <Compose
           value={address}
@@ -150,9 +150,9 @@ export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
       {/* Trace Depth (Hops) Selection */}
       <div className="mt-4">
         <div className="flex items-center justify-between mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-400">
-          <span>Trace Depth (Hops)</span>
+          <span>Fund Tracing Depth (Steps)</span>
           <span className="text-[10px] text-[#d8b84d]">
-            {hops === 0 ? "Target wallet transactions only" : `${hops} hop traversal active`}
+            {hops === 0 ? "Target wallet transactions only" : `${hops} step fund tracing active`}
           </span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -168,7 +168,7 @@ export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
               }`}
             >
               <div className="text-xs font-semibold flex items-center justify-between">
-                <span>{opt.value} {opt.value === 1 ? "Hop" : "Hops"}</span>
+                <span>{opt.value} {opt.value === 1 ? "Step" : "Steps"}</span>
                 {hops === opt.value && <CheckCircle2 size={12} className="text-[#B45309] dark:text-[#FFE28A]" />}
               </div>
               <div className="text-[9px] text-slate-400 leading-tight mt-0.5 truncate" title={opt.desc}>
@@ -181,7 +181,7 @@ export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
 
       {/* FIR / Case No Input */}
       <div className="mt-4">
-        <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">FIR / NCRP complaint reference</label>
+        <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">Complaint / Case Reference</label>
         <div className="glass-input flex items-center gap-2 rounded-xl px-3.5 py-2.5 focus-within:border-[#d8b84d] transition">
           <Search size={14} className="text-slate-400 dark:text-slate-500 shrink-0" />
           <input
@@ -207,15 +207,15 @@ export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
         )}
         <span className="text-[#150F00] font-mono">
           {loading 
-            ? `Traversing live blockchain (${elapsedTime.toFixed(2)}s)...` 
-            : `Start autonomous trace (${hops} ${hops === 1 ? "hop" : "hops"})`}
+            ? `Following funds on blockchain (${elapsedTime.toFixed(2)}s)...` 
+            : `Trace Funds (${hops} ${hops === 1 ? "step" : "steps"})`}
         </span>
       </button>
 
       {/* Footer Info */}
       <div className="mt-3 flex items-center justify-between text-[10px] text-slate-500">
         <span className="flex items-center gap-1">
-          <Eye size={12} className="text-emerald-400" /> Continuous surveillance: ACTIVE (25s cadence)
+          <Eye size={12} className="text-emerald-400" /> Live Monitoring: ACTIVE (25s interval)
         </span>
         <span className="text-[#d8b84d] font-medium">Auto-detection: ENABLED</span>
       </div>

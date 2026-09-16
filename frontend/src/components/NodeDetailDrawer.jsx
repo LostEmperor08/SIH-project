@@ -177,11 +177,11 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-bold uppercase tracking-widest text-[#d8b84d]">
-                  Entity Dossier
+                  {isTransaction ? "Transfer Details" : "Wallet Details"}
                 </span>
                 <span className="border inline-flex items-center gap-1 rounded-full border-emerald-500/30 bg-emerald-950/70 px-2 py-0.5 font-semibold text-emerald-300">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Sec 65B Certified
+                  Court-Ready Evidence
                 </span>
               </div>
               <h2 className="sm:text-lg font-bold text-white tracking-tight">{title}</h2>
@@ -215,7 +215,7 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
                   <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#d8b84d]/20 text-[#d8b84d]">
                     <Layers size={14} />
                   </div>
-                  Transfer Flow
+                  Money Trail
                 </span>
                 <span className="border rounded-lg border-white/10 bg-black/40 px-3 py-1 text-slate-300 font-mono text-xs">
                   {chainName}
@@ -226,7 +226,7 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
               <div className="space-y-2 font-mono text-xs">
                 <div className="border rounded-xl border-white/5 bg-black/60 p-3 flex items-center justify-between">
                   <div className="truncate mr-2">
-                    <span className="text-slate-400 block text-[10px] font-sans uppercase font-bold">Sender / Origin</span>
+                    <span className="text-slate-400 block text-[10px] font-sans uppercase font-bold">From</span>
                     <span className="text-slate-200 font-semibold">{originAddr}</span>
                   </div>
                   <button
@@ -250,7 +250,7 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
 
                 <div className="border rounded-xl border-white/5 bg-black/60 p-3 flex items-center justify-between">
                   <div className="truncate mr-2">
-                    <span className="text-slate-400 block text-[10px] font-sans uppercase font-bold">Recipient / Counterparty</span>
+                    <span className="text-slate-400 block text-[10px] font-sans uppercase font-bold">To</span>
                     <span className="text-slate-200 font-semibold">{targetAddr}</span>
                   </div>
                   <button
@@ -276,7 +276,7 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
                   <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#d8b84d]/20 text-[#d8b84d]">
                     <Wallet size={14} />
                   </div>
-                  Address Identifier
+                  Wallet Address
                 </span>
                 <span className="border rounded-lg border-white/10 bg-black/40 px-3 py-1 text-slate-300 font-mono text-xs">
                   {chainName}
@@ -300,10 +300,10 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
           {entity.sanctionFloorApplied && (
             <div className="border rounded-2xl border-red-500/40 bg-red-950/40 p-4 text-xs">
               <div className="flex items-center gap-2 font-bold text-red-400 uppercase tracking-wider">
-                <AlertTriangle size={16} /> Sanctions Hard Floor Override Applied
+                <AlertTriangle size={16} /> Global Sanctions Match
               </div>
               <p className="mt-1 text-red-200">
-                {entity.sanctionFloorReason || "Direct OFAC SDN sanctions match enforced a mandatory min 90.0 CRITICAL risk floor."}
+                {entity.sanctionFloorReason || "Direct sanctions match enforced a mandatory CRITICAL risk score."}
               </p>
             </div>
           )}
@@ -311,7 +311,7 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
           {/* Key Metrics Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="border rounded-2xl border-white/10 bg-white/[0.04] p-5 shadow-sm">
-              <span className="uppercase tracking-wider text-slate-400 font-semibold text-xs">Traced Value</span>
+              <span className="uppercase tracking-wider text-slate-400 font-semibold text-xs">Amount Traced</span>
               <div className="mt-2 sm:text-2xl font-bold text-white font-mono">
                 {Number(balance).toLocaleString()} USDT
               </div>
@@ -321,7 +321,7 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
             </div>
 
             <div className="border rounded-2xl border-white/10 bg-white/[0.04] p-5 shadow-sm">
-              <span className="uppercase tracking-wider text-slate-400 font-semibold text-xs">Wallet Risk Assessment</span>
+              <span className="uppercase tracking-wider text-slate-400 font-semibold text-xs">Risk Level</span>
               <div className="mt-2 flex items-center gap-2">
                 <span className="sm:text-2xl font-bold text-amber-400 font-mono">{riskScore}/100</span>
                 <span className="border rounded-full bg-amber-500/15 px-2.5 py-0.5 font-bold text-amber-300 border-amber-500/30 text-xs">
@@ -329,7 +329,7 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
                 </span>
               </div>
               <div className="text-slate-400 mt-1 text-xs">
-                {entity.sanctionFloorApplied ? "Sanctions Floor Overridden" : "Multi-factor Wallet Risk Model"}
+                {entity.sanctionFloorApplied ? "Sanctions Match Applied" : "Based on money trail patterns"}
               </div>
             </div>
           </div>
@@ -339,20 +339,20 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
             <div className="border rounded-2xl border-purple-500/30 bg-purple-950/30 p-5 shadow-sm space-y-2">
               <div className="flex items-center justify-between">
                 <span className="uppercase tracking-wider text-purple-300 font-bold text-xs flex items-center gap-1.5">
-                  <Sparkles size={14} className="text-purple-400" /> Decoupled VASP Entity Attribution
+                  <Sparkles size={14} className="text-purple-400" /> Exchange Identification
                 </span>
                 <span className="px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-200 border border-purple-500/40 text-xs font-mono font-bold">
                   {(Number(entity.vaspAttribution.confidence || 0) * 100).toFixed(0)}% Confidence
                 </span>
               </div>
               <div className="text-sm font-bold text-white flex items-center gap-2">
-                <span>{entity.vaspAttribution.name || "Unattributed Exchange"}</span>
-                <span className="text-xs font-normal text-purple-300">({entity.vaspAttribution.entity_type || "VASP"})</span>
+                <span>{entity.vaspAttribution.name || "Crypto Exchange / VASP"}</span>
+                <span className="text-xs font-normal text-purple-300">({entity.vaspAttribution.entity_type || "Crypto Exchange / VASP"})</span>
               </div>
               {entity.vaspAttribution.evidence && entity.vaspAttribution.evidence.length > 0 && (
-                <div className="mt-2 pt-2 border-t border-purple-500/20 text-xs text-purple-200 font-mono">
-                  <div className="text-[10px] text-purple-400 uppercase font-bold mb-1">Attribution Evidence:</div>
-                  <ul className="list-disc pl-4 space-y-0.5">
+                <div className="mt-2 pt-2 border-t border-purple-500/20 text-xs text-purple-200">
+                  <div className="text-[10px] text-purple-400 uppercase font-bold mb-1">Exchange Evidence:</div>
+                  <ul className="list-disc pl-4 space-y-0.5 font-mono">
                     {entity.vaspAttribution.evidence.map((ev, i) => (
                       <li key={i}>{ev}</li>
                     ))}
@@ -366,19 +366,19 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
           {entity.transactionAggregates && entity.transactionAggregates.total_scored_txs > 0 && (
             <div className="border rounded-2xl border-white/10 bg-white/[0.03] p-4 text-xs space-y-2">
               <span className="uppercase tracking-wider text-slate-400 font-bold text-[11px] block">
-                Transaction Risk Aggregates ({entity.transactionAggregates.total_scored_txs} Transfers)
+                Transfer Risk Summary ({entity.transactionAggregates.total_scored_txs} Transfers)
               </span>
               <div className="grid grid-cols-3 gap-2 font-mono">
                 <div className="border rounded-xl border-white/5 bg-black/40 p-2 text-center">
-                  <span className="text-[10px] text-slate-400 block font-sans">Mean Tx Risk</span>
+                  <span className="text-[10px] text-slate-400 block font-sans">Average Risk</span>
                   <span className="text-amber-300 font-bold">{entity.transactionAggregates.mean_transaction_risk}</span>
                 </div>
                 <div className="border rounded-xl border-white/5 bg-black/40 p-2 text-center">
-                  <span className="text-[10px] text-slate-400 block font-sans">Max Tx Risk</span>
+                  <span className="text-[10px] text-slate-400 block font-sans">Highest Risk</span>
                   <span className="text-red-400 font-bold">{entity.transactionAggregates.max_transaction_risk}</span>
                 </div>
                 <div className="border rounded-xl border-white/5 bg-black/40 p-2 text-center">
-                  <span className="text-[10px] text-slate-400 block font-sans">High/Crit Txs</span>
+                  <span className="text-[10px] text-slate-400 block font-sans">High Risk Transfers</span>
                   <span className="text-purple-300 font-bold">
                     {entity.transactionAggregates.high_risk_tx_count + entity.transactionAggregates.critical_tx_count}
                   </span>
@@ -387,23 +387,57 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
             </div>
           )}
 
-          {/* Entity Typology Badge */}
+          {/* Why This Was Flagged */}
           <div className="border rounded-2xl border-white/10 bg-white/[0.04] p-5 shadow-sm">
-            <span className="uppercase tracking-wider text-slate-400 font-semibold text-xs">Classification & Typology</span>
+            <span className="uppercase tracking-wider text-slate-400 font-semibold text-xs">Why This Was Flagged</span>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <span className="border inline-flex items-center gap-1.5 rounded-xl border-[rgba(216,184,77,0.4)] bg-[rgba(216,184,77,0.15)] px-3 py-1.5 font-semibold text-[#d8b84d] text-xs">
-                <ShieldAlert size={14} /> {entityType}
+                <ShieldAlert size={14} /> {entityType === "SUSPECT" ? "Wallet Under Investigation" : entityType === "VASP" ? "Crypto Exchange" : entityType}
               </span>
-              <span className="border inline-flex items-center gap-1.5 rounded-xl border-cyan-500/30 bg-cyan-950/50 px-3 py-1.5 text-cyan-300 font-mono text-xs">
-                <Layers size={14} /> Peel Chain Pattern
+              <span className="border inline-flex items-center gap-1.5 rounded-xl border-cyan-500/30 bg-cyan-950/50 px-3 py-1.5 text-cyan-300 text-xs">
+                <Layers size={14} /> Rapid Fund Split Pattern
               </span>
               <span className="inline-flex items-center gap-1.5 rounded-xl border-purple-500/30 bg-purple-950/50 px-3 py-1.5 text-purple-300 text-xs">
-                <Zap size={14} /> Instant Sweep
+                <Zap size={14} /> Immediate Forwarding
               </span>
             </div>
             <p className="mt-3 leading-relaxed text-slate-300 text-xs">
-              {entity.audit_notes || "Continuous on-chain graph analysis classifies this transfer as an automated layering mule movement utilized for aggregating victim funds before multi-hop VASP deposit."}
+              {entity.audit_notes ? (
+                entity.audit_notes
+              ) : (
+                "This address is part of a fast-moving money trail used to pass victim funds through multiple intermediate wallets before depositing into an exchange."
+              )}
             </p>
+
+            {/* Expandable Technical Details Accordion */}
+            <details className="mt-4 border-t border-white/10 pt-3 group">
+              <summary className="text-xs font-semibold text-[#d8b84d] cursor-pointer hover:text-amber-300 transition flex items-center justify-between">
+                <span>Technical details</span>
+                <span className="text-[10px] text-slate-400 group-open:rotate-180 transition-transform">▼</span>
+              </summary>
+              <div className="mt-3 space-y-2 text-[11px] font-mono text-slate-300 bg-black/40 p-3 rounded-xl border border-white/5">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Classification Code:</span>
+                  <span className="text-cyan-300">{entityType}</span>
+                </div>
+                {blockNum && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Block Height:</span>
+                    <span>#{blockNum.toLocaleString()}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Observed Time:</span>
+                  <span>{firstSeen}</span>
+                </div>
+                {txHash && (
+                  <div className="flex justify-between items-center gap-2">
+                    <span className="text-slate-400">Tx Hash:</span>
+                    <span className="text-cyan-400 truncate max-w-[200px]" title={txHash}>{txHash}</span>
+                  </div>
+                )}
+              </div>
+            </details>
           </div>
 
           {/* Audit Trail Context Box */}

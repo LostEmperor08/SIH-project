@@ -17,11 +17,11 @@ import { traceFunds, buildNotice, buildDossier } from "../lib/api.js";
 import { sealTraceEvidence, caseRefFor } from "../lib/evidence.js";
 
 const emptyMetrics = [
-  ["Traced volume", "--", "₹0 INR"],
-  ["Attribution velocity", "0.00s", "Live RPC"],
-  ["Identified VASP", "-", "Deposit endpoint"],
-  ["FIU-IND status", "Standby", "PMLA jurisdiction"],
-  ["Preservation SLA", "< 4 Hours", "Sec 91 window"],
+  ["Funds Traced", "--", "₹0 INR"],
+  ["Trace Time", "0.00s", "Live blockchain data"],
+  ["Exchange Found", "Not identified", "Receiving wallet"],
+  ["Financial Intelligence", "Standby", "Financial Investigation Framework"],
+  ["Response Window", "< 4 Hours", "Preservation window"],
 ];
 
 const tabVariants = {
@@ -100,13 +100,13 @@ export default function DashboardPage() {
         .then((r) => {
           setEvidenceStatus(
             r.errors.length
-              ? `Sealed ${r.sealed} of ${r.onPath ?? 0} records — ${r.errors[0]}`
-              : `${r.sealed} evidence records sealed to ${caseRef} ` +
+              ? `Saved ${r.sealed} of ${r.onPath ?? 0} records — ${r.errors[0]}`
+              : `${r.sealed} evidence records saved to ${caseRef} ` +
                 `(${r.onPath ?? 0} of ${r.considered ?? 0} traced transfers are on ` +
                 `the money path from ${address.slice(0, 10)}…)`
           );
         })
-        .catch((e) => setEvidenceStatus(`Evidence sealing failed: ${e.message}`));
+        .catch((e) => setEvidenceStatus(`Could not securely save evidence: ${e.message}`));
     } catch (traceError) {
       setError(traceError.message ?? "Trace failed");
     } finally {
@@ -129,18 +129,18 @@ export default function DashboardPage() {
 
   const metrics = attribution
     ? [
-        ["Traced volume", `${attribution.hops} hops`, `${attribution.exchange_name} route`],
-        ["Attribution velocity", `${elapsedTime > 0 ? elapsedTime.toFixed(2) : (attribution.time_to_attribution_ms / 1000).toFixed(2)}s`, "Direct on-chain RPC"],
-        ["Identified VASP", attribution.exchange_name, "Deposit endpoint"],
-        ["FIU-IND status", `${(attribution.confidence * 100).toFixed(0)}%`, "PMLA jurisdiction"],
-        ["Preservation SLA", "< 4 Hours", "Sec 91 window"],
+        ["Funds Traced", `${attribution.hops} hop(s)`, `${attribution.exchange_name || "Exchange"} route`],
+        ["Trace Time", `${elapsedTime > 0 ? elapsedTime.toFixed(2) : (attribution.time_to_attribution_ms / 1000).toFixed(2)}s`, "Live blockchain data"],
+        ["Exchange Found", attribution.exchange_name || "Not identified", "Receiving wallet"],
+        ["Financial Intelligence", `${(attribution.confidence * 100).toFixed(0)}% Match`, "Financial Investigation Framework"],
+        ["Response Window", "< 4 Hours", "Preservation window"],
       ]
     : [
-        ["Traced volume", "--", "₹0 INR"],
-        ["Attribution velocity", `${elapsedTime > 0 ? elapsedTime.toFixed(2) : "0.00"}s`, "Live RPC"],
-        ["Identified VASP", "-", "Deposit endpoint"],
-        ["FIU-IND status", "Standby", "PMLA jurisdiction"],
-        ["Preservation SLA", "< 4 Hours", "Sec 91 window"],
+        ["Funds Traced", "--", "₹0 INR"],
+        ["Trace Time", `${elapsedTime > 0 ? elapsedTime.toFixed(2) : "0.00"}s`, "Live blockchain data"],
+        ["Exchange Found", "Not identified", "Receiving wallet"],
+        ["Financial Intelligence", "Standby", "Financial Investigation Framework"],
+        ["Response Window", "< 4 Hours", "Preservation window"],
       ];
 
   const handleNav = (route) => {
@@ -173,29 +173,29 @@ export default function DashboardPage() {
               <motion.section variants={cardItemVariants} className="hero-grid">
                 <div className="hero-copy">
                   <div className="eyebrow flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase text-[#E5B83B]">
-                    <Sparkles size={13} className="text-[#E5B83B]" /> National cyber crime reporting portal integrated
+                    <Sparkles size={13} className="text-[#E5B83B]" /> National cyber crime portal integrated
                   </div>
                   <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight">
-                    See the money.<br />
-                    <span className="rolex-gold-text">Stop the fraud.</span>
+                    Trace the money.<br />
+                    <span className="rolex-gold-text">Find where it went.</span>
                   </h1>
                   <p>
-                    Input any suspect cryptocurrency wallet to autonomously trace transactional flow, uncover receiving VASPs, and issue Section 91 freeze directives in real-time.
+                    Enter a suspicious crypto wallet to follow the funds, identify receiving exchanges, and prepare official investigation actions.
                   </p>
                 </div>
                 <div className="latency-card glass-panel border border-[#E5B83B]/25">
                   <Clock3 size={19} className="text-[#E5B83B]" />
                   <div>
-                    <div className="eyebrow text-[#E5B83B]">Real-time attribution latency</div>
+                    <div className="eyebrow text-[#E5B83B]">Time to Identify Exchange</div>
                     <div className="mt-1 text-2xl font-bold text-white font-mono">
                       {elapsedTime > 0
                         ? `${elapsedTime.toFixed(2)}s`
                         : (attribution ? `${(attribution.time_to_attribution_ms / 1000).toFixed(2)}s` : "0.00s")}{" "}
                       <span className="text-xs font-normal text-slate-400 font-sans">
-                        {loading ? "Scanning Live..." : (graph ? "Attributed" : "Standby")}
+                        {loading ? "Checking blockchain..." : (graph ? "Exchange identified" : "Ready for wallet search")}
                       </span>
                     </div>
-                    <div className="mt-2 text-[11px] text-slate-400">Direct on-chain node execution</div>
+                    <div className="mt-2 text-[11px] text-slate-400">Live blockchain data</div>
                   </div>
                 </div>
               </motion.section>
@@ -228,19 +228,19 @@ export default function DashboardPage() {
                 ))}
               </motion.section>
 
-              {/* Multi-Hop Traversal Chain */}
+              {/* Money Trail Section */}
               <motion.section variants={cardItemVariants} className="glass-panel overflow-hidden rounded-2xl border border-[#E5B83B]/20 shadow-2xl">
                 <div className="section-heading p-5 pb-3">
                   <div>
                     <h2 className="flex items-center gap-2 text-base font-bold text-white">
-                      <GitBranch size={16} className="text-[#E5B83B]" /> Multi-hop traversal chain
+                      <GitBranch size={16} className="text-[#E5B83B]" /> Money Trail
                     </h2>
                     <p className="text-xs text-slate-400">
-                      Click any node in the traversal chain to open the side popup dossier
+                      Select any wallet to view its details.
                     </p>
                   </div>
                   <span className="badge rounded-full px-3 py-1 text-xs font-semibold border border-[#E5B83B]/30 text-[#FFE28A] bg-[#08261B]/60">
-                    {graph ? `${graph.nodes.length} nodes loaded` : "Standby · awaiting wallet ingestion"}
+                    {graph ? `${graph.nodes.length} wallets loaded` : "Ready for wallet search"}
                   </span>
                 </div>
                 <div className="graph-wrap" style={{ minHeight: "440px" }}>
@@ -258,16 +258,16 @@ export default function DashboardPage() {
                   <div>
                     <div className="flex items-center gap-2">
                       <h2 className="flex items-center gap-2 text-base font-bold text-white">
-                        <BookOpen size={16} className="text-[#E5B83B]" /> Cryptographic evidence ledger
+                        <BookOpen size={16} className="text-[#E5B83B]" /> Investigation Records
                       </h2>
                       <span className="rounded-full bg-[#E5B83B]/15 px-2.5 py-0.5 text-[10px] font-bold text-[#FFE28A] border border-[#E5B83B]/30">
                         {graph?.transactions?.length 
-                          ? `${graph.transactions.length} On-Chain Records` 
-                          : (graph?.edges?.length ? `${graph.edges.length} Traversed Edges` : "Verified Audit Records")}
+                          ? `${graph.transactions.length} Blockchain Records` 
+                          : (graph?.edges?.length ? `${graph.edges.length} Traced Transfers` : "Recorded & Verified Records")}
                       </span>
                     </div>
                     <p className="text-xs text-slate-400 mt-1">
-                      Verified on-chain audit trail ready for Section 65B Indian Evidence Act court certification.
+                      Blockchain activity is securely recorded so investigators can review exactly how the funds moved.
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -277,7 +277,7 @@ export default function DashboardPage() {
                       className="rolex-gold-btn flex items-center gap-1.5 px-4 py-2 text-xs font-extrabold rounded-xl cursor-pointer"
                     >
                       <FileSpreadsheet size={13} className="text-[#150F00]" />
-                      <span className="text-[#150F00]">Open Evidence Ledger</span>
+                      <span className="text-[#150F00]">Open Investigation Records</span>
                       <ArrowRight size={13} className="text-[#150F00]" />
                     </button>
                     {graph && (
@@ -285,18 +285,18 @@ export default function DashboardPage() {
                         <button
                           type="button"
                           className="rolex-green-btn flex items-center gap-1.5 px-3.5 py-2 text-xs font-extrabold rounded-xl cursor-pointer"
-                          onClick={() => download(buildNotice(graph, firNo), "bnss-s94-notice.txt", "text/plain")}
+                          onClick={() => download(buildNotice(graph, firNo), "official-preservation-request.txt", "text/plain")}
                         >
-                          <Download size={14} className="text-white" />
-                          <span className="text-white font-extrabold">Section 91 notice</span>
+                          <Download size={14} className="text-[#150F00]" />
+                          <span className="text-[#150F00] font-extrabold">Section 91 Notice</span>
                         </button>
                         <button
                           type="button"
                           className="rolex-green-btn flex items-center gap-1.5 px-3.5 py-2 text-xs font-extrabold rounded-xl cursor-pointer"
-                          onClick={() => download(buildDossier(graph, firNo), "forensic-attribution-dossier.html", "text/html")}
+                          onClick={() => download(buildDossier(graph, firNo), "investigation-report.html", "text/html")}
                         >
-                          <FileText size={14} className="text-white" />
-                          <span className="text-white font-extrabold">Forensic dossier</span>
+                          <FileText size={14} className="text-[#150F00]" />
+                          <span className="text-[#150F00] font-extrabold">Investigation Report</span>
                         </button>
                       </>
                     )}

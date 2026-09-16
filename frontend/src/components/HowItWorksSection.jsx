@@ -5,35 +5,35 @@ import { readPref, writePref } from "../lib/storage.js";
 export const STEPS = [
   {
     icon: Search,
-    tag: "Ingestion",
-    title: "A reported address enters the system",
+    tag: "Receive Complaint",
+    title: "A reported wallet enters the system",
     body:
-      "A complaint arrives from the NCRP or Sahyog stream carrying the suspect wallet, the chain it sits on, and the acknowledgement reference. Chakravyuh resolves the chain automatically and opens a case against the FIR number.",
-    out: "Case opened · FIR linked",
+      "A complaint arrives carrying the suspect wallet address and case reference. The system immediately checks the blockchain and starts tracing.",
+    out: "Case opened · Wallet linked",
   },
   {
     icon: GitBranch,
-    tag: "Traversal",
+    tag: "Follow the Money",
     title: "The funds are followed hop by hop",
     body:
-      "Direct on-chain RPC calls walk every outbound transfer from the reported wallet. Peel chains, mixer pass-throughs, bridge crossings and mule fan-outs are each classified as the traversal goes, so the path stays readable rather than collapsing into a cloud of addresses.",
-    out: "Hop graph · classified",
+      "The system follows outbound transfers step-by-step through intermediate wallets and money paths to reveal where the funds went.",
+    out: "Money trail · Analyzed",
   },
   {
     icon: Landmark,
-    tag: "Attribution",
+    tag: "Identify the Exchange",
     title: "The receiving exchange is identified",
     body:
-      "When the trail reaches a deposit address belonging to a virtual asset service provider, that endpoint is matched against known VASP clusters. The result is the exchange holding the funds and the specific deposit endpoint the money landed in.",
-    out: "VASP · deposit endpoint",
+      "When funds land at a cryptocurrency exchange or custodial platform, the exchange and deposit address are automatically identified.",
+    out: "Crypto exchange identified",
   },
   {
     icon: FileText,
-    tag: "Statutory output",
+    tag: "Prepare Official Actions",
     title: "Court-ready paperwork comes out the other end",
     body:
-      "Every hop is hashed and written to the evidence ledger for Section 65B certification under the Indian Evidence Act. From there the case generates a Section 91 CrPC preservation notice or a BNSS Section 94 freeze directive addressed to the identified VASP.",
-    out: "Sec 91 / BNSS 94 notice",
+      "The evidence is recorded into official investigation records so you can immediately generate Section 91 notices or freeze requests.",
+    out: "Section 91 / Freeze notice ready",
   },
 ];
 
