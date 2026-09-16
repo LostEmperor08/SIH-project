@@ -375,6 +375,7 @@ export function EvidenceLedgerPage({ onNavigate }) {
         {selectedEntity && (
           <NodeDetailDrawer
             entity={selectedEntity}
+            caseRef={selectedEntity?.case_ref}
             onClose={() => setSelectedEntity(null)}
             onAddToWatchlist={() => {}}
             onGenerateNotice={() => {}}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { addressExplorer } from "../lib/explorers.js";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
@@ -36,23 +37,27 @@ export function WorkspaceCollectionPage({ view, graph, onNavigate }) {
   const [newReason, setNewReason] = useState("");
   const [newTypology, setNewTypology] = useState("Suspect Layering Mule");
   const [toastMsg, setToastMsg] = useState("");
+  const [loadError, setLoadError] = useState(null);
 
+  // allSettled, not all: Promise.all rejects on the FIRST failure, so a
+  // watchlist error was wiping the dossier list too — which is why the
+  // Legal Dossier page looked like it "could not fetch" even when the
+  // dossier query itself was fine.
   const loadData = async () => {
     setLoading(true);
-    try {
-      const [wlData, dosData] = await Promise.all([
-        fetchWatchlist(),
-        fetchDossiers()
-      ]);
-      setWatchlist(wlData || []);
-      setDossiers(dosData || []);
-    } catch (e) {
-      console.error("Watchlist fetch error:", e);
-      setWatchlist([]);
-      setDossiers([]);
-    } finally {
-      setLoading(false);
-    }
+    const [wl, dos] = await Promise.allSettled([fetchWatchlist(), fetchDossiers()]);
+
+    if (wl.status === "fulfilled") setWatchlist(wl.value || []);
+    else { console.error("watchlist fetch:", wl.reason); setWatchlist([]); }
+
+    if (dos.status === "fulfilled") setDossiers(dos.value || []);
+    else { console.error("dossier fetch:", dos.reason); setDossiers([]); }
+
+    const failed = view === "dossier" ? dos : wl;
+    setLoadError(failed.status === "rejected"
+      ? (failed.reason?.message || String(failed.reason))
+      : null);
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -206,6 +211,12 @@ export function WorkspaceCollectionPage({ view, graph, onNavigate }) {
             )}
           </div>
         </div>
+
+        {loadError && (
+          <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs font-semibold text-amber-300">
+            {loadError}
+          </div>
+        )}
 
         {/* Status Toast */}
         {toastMsg && (
@@ -479,7 +490,7 @@ export function WorkspaceCollectionPage({ view, graph, onNavigate }) {
                           {copiedId === item.id ? <Check size={13} className="text-emerald-600 dark:text-emerald-400" /> : <Copy size={13} />}
                         </button>
                         <a
-                          href={`https://polygonscan.com/address/${item.address}`}
+                          href={(addressExplorer(item.address, item.chain) ?? '#')}
                           target="_blank"
                           rel="noreferrer"
                           onClick={(e) => e.stopPropagation()}

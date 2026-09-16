@@ -180,6 +180,17 @@ export default function DashboardPage() {
                 <SearchPanel onTrace={runTrace} loading={loading} />
               </motion.div>
               {error && <div className="glass-panel rounded-xl p-3 text-sm text-red-300 border border-red-500/30">{error}</div>}
+              {/* Sealing runs behind the graph; without this banner a failed
+                  seal was invisible and the Evidence Ledger just looked empty. */}
+              {evidenceStatus && (
+                <div className={`glass-panel rounded-xl p-3 text-sm border ${
+                  /fail|error|of/i.test(evidenceStatus)
+                    ? "text-amber-300 border-amber-500/30"
+                    : "text-emerald-300 border-emerald-500/30"
+                }`}>
+                  {evidenceStatus}
+                </div>
+              )}
 
               {/* Metrics Grid */}
               <motion.section variants={cardItemVariants} className="metric-grid">
@@ -371,6 +382,7 @@ export default function DashboardPage() {
         {selectedEntity && (
           <NodeDetailDrawer
             entity={selectedEntity}
+            caseRef={caseRef}
             onClose={() => setSelectedEntity(null)}
             onAddToWatchlist={() => {}}
             onGenerateNotice={() => {}}

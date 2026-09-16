@@ -67,7 +67,8 @@ export async function fetchWatchlist() {
 export async function addToWatchlist(item) {
   const newItem = {
     id: `w-${Date.now()}`,
-    address: item.id || item.address || item.origin_sender || item.counterparty,
+    // address first: item.id can be a UI node key, not a chain address
+    address: item.address || item.id || item.origin_sender || item.counterparty,
     label: item.label || item.origin_label || item.counterparty_label || "Monitored Entity",
     chain: item.chain || null,
     risk: item.risk ?? (Number(item.risk_score) >= 80 ? "CRITICAL"
@@ -119,8 +120,10 @@ export async function removeFromWatchlist(id) {
 export async function fetchDossiers() {
   if (isSupabaseConfigured) {
     try {
-      const { data, error } = await supabase.from("dossiers").select("*").order("created_at", { ascending: false });
-      if (!error && data) return data;
+      const { data, error } = await supabase
+        .from("dossiers").select("*").order("created_at", { ascending: false });
+      if (!error) return data ?? [];
+      console.error("dossier fetch:", error.message);
     } catch (err) {
       console.warn("Supabase dossiers fetch fallback", err);
     }
@@ -128,47 +131,128 @@ export async function fetchDossiers() {
   return notConfigured("dossiers");
 }
 
+// The ONLY columns public.dossiers actually has. Anything else in the
+// caller's object (fir_no, target_address, findings, ...) made PostgREST
+// reject the whole insert with PGRST204 "column not found" — and the old
+// code ignored the returned error, so every dossier silently vanished and
+// the Legal Dossier page stayed empty forever.
+const DOSSIER_COLUMNS = [
+  "id", "case_ref", "title", "target_vasp", "deposit_address",
+  "total_traced_usdt", "total_traced_inr", "confidence", "status",
+  "statutory_act", "io_name", "created_at", "created_by", "submitted_at",
+];
+
 export async function saveDossier(dossier) {
-  const newDossier = {
+  if (!isSupabaseConfigured) {
+    throw new Error(
+      "Cannot file a dossier: Supabase is not configured. A legal notice " +
+      "that exists only in this browser tab is not a record."
+    );
+  }
+
+  // RLS: dossiers_insert requires created_by = auth.uid(). Omit it and the
+  // row is refused by policy, not by validation — which reads as a silent
+  // no-op unless the error is surfaced.
+  const { data: auth } = await supabase.auth.getUser();
+  const uid = auth?.user?.id;
+  if (!uid) {
+    throw new Error("Not signed in — a dossier must carry the officer who filed it.");
+  }
+
+  const merged = {
     id: `d-${Date.now()}`,
-    case_ref: dossier.case_ref || `SIH/2026/${Math.floor(1000 + Math.random() * 9000)}`,
+    case_ref: dossier.case_ref || dossier.fir_no || null,
     title: dossier.title || "Cryptographic Attribution Dossier",
     // NEVER default the VASP. Naming the wrong exchange sends the freeze
     // request to the wrong place and burns the only chance to recover funds.
     target_vasp: dossier.target_vasp || null,
-    deposit_address: dossier.deposit_address || "0x...",
-    total_traced_usdt: dossier.total_traced_usdt || 0,
-    total_traced_inr: dossier.total_traced_inr || 0,
-    confidence: dossier.confidence || "95%",
-    status: "NOTICE_ISSUED",
-    statutory_act: "BNSS Sec 94 / Indian Evidence Act Sec 65B",
-    created_at: new Date().toISOString(),
-    io_name: dossier.io_name || "Investigating Officer",
-    ...dossier
+    deposit_address: dossier.deposit_address || dossier.target_address || null,
+    total_traced_usdt: Number(dossier.total_traced_usdt || 0),
+    total_traced_inr: Number(dossier.total_traced_inr || 0),
+    confidence: dossier.confidence || null,
+    status: dossier.status || "NOTICE_ISSUED",
+    statutory_act: dossier.statutory_act ||
+      "BNSS Sec 94 / Indian Evidence Act Sec 65B",
+    io_name: dossier.io_name || null,
+    created_by: uid,
+    submitted_at: new Date().toISOString(),
+    ...dossier,
   };
 
-  const current = getLocal("dossiers", []);
-  const updated = [newDossier, ...current];
-  setLocal("dossiers", updated);
-
-  if (isSupabaseConfigured) {
-    try {
-      await supabase.from("dossiers").insert([newDossier]);
-    } catch (err) {
-      console.warn("Supabase dossier insert error", err);
-    }
+  // Findings and any other free text belong in the title, not in a column
+  // that does not exist.
+  if (dossier.findings && !dossier.title) {
+    merged.title = String(dossier.findings).slice(0, 180);
   }
 
-  return newDossier;
+  // Whitelist AFTER the spread, so a caller cannot reintroduce a bad column.
+  const row = {};
+  for (const k of DOSSIER_COLUMNS) {
+    if (merged[k] !== undefined) row[k] = merged[k];
+  }
+  row.created_by = uid;            // never overridable by the caller
+
+  const { data, error } = await supabase
+    .from("dossiers").insert([row]).select().single();
+
+  if (error) {
+    throw new Error(
+      `Dossier could not be filed: ${error.message}` +
+      (error.code === "42501"
+        ? " \u2014 your account needs the 'analyst' role or higher."
+        : "")
+    );
+  }
+  return data;
 }
 
 // ── Evidence Records Operations (Live DB & Local Cache) ────────────────
+// evidence_ledger stores what the CHAIN proves: addresses, value in USDT,
+// the tx hash, when it was observed. It does not store a rupee figure, an
+// IST string or a classification, because none of those are on-chain facts.
+// The table was right and the UI was reading columns that do not exist, so
+// every row rendered blank. Derive them here, once, where the derivation is
+// visible — rather than inventing columns in the database.
+const USD_INR = Number(import.meta.env.VITE_USD_INR_RATE) || 88.5;
+
+function normaliseEvidenceRow(r, i) {
+  const usdt = Number(r.value_usdt ?? 0);
+  const when = r.observed_at || r.created_at || null;
+  const risk = Number(r.risk_score ?? 0);
+  return {
+    ...r,
+    hop: r.hop ?? r.seq ?? i + 1,
+    // Aliases the table itself does not carry.
+    origin_sender: r.from_addr ?? "",
+    counterparty: r.to_addr ?? "",
+    value_usdt: usdt,
+    value_inr: Math.round(usdt * USD_INR),
+    datetime_utc: when ? new Date(when).toISOString().replace("T", " ").slice(0, 19) : "",
+    datetime_ist: when
+      ? new Date(when).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour12: false })
+      : "",
+    classification: r.classification ||
+      (risk >= 80 ? "VASP / HIGH-RISK ENDPOINT"
+        : i === 0 ? "INBOUND DEPOSIT" : "OUTWARD SWEEP"),
+    status: r.sealed === false ? "UNSEALED" : "CERTIFIED",
+  };
+}
+
 export async function fetchEvidenceRecords() {
   if (isSupabaseConfigured) {
     try {
-      const { data, error } = await supabase.from("evidence_ledger").select("*").order("hop", { ascending: true });
-      if (!error && data && data.length > 0) return data;
+      const { data, error } = await supabase
+        .from("evidence_ledger").select("*")
+        .order("case_ref", { ascending: false })
+        .order("seq", { ascending: true });
+      // An empty ledger is a valid state, not a failure. The old
+      // `data.length > 0` check fell through to notConfigured(), which
+      // THROWS — so a fresh install showed an error instead of "no records".
+      if (!error) return (data ?? []).map(normaliseEvidenceRow);
+      console.error("evidence fetch:", error.message);
+      throw new Error(`Evidence ledger could not be read: ${error.message}`);
     } catch (err) {
+      if (err instanceof Error && err.message.startsWith("Evidence ledger")) throw err;
       console.warn("Supabase evidence fetch fallback", err);
     }
   }

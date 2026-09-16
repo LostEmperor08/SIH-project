@@ -94,8 +94,12 @@ async def trace_multi_hop(
                     k = f"{e.chain}:{a}"
                     value_of[k] = value_of.get(k, 0.0) + e.value_usd
 
+            # Stable ordering: value descending, then address ascending.
+            # Sorting on value alone leaves ties in arbitrary dict order, so
+            # two identical traces could expand different wallets and return
+            # different node counts — which is exactly what was happening.
             ranked = sorted(next_layer.items(),
-                            key=lambda kv: value_of.get(kv[0], 0.0), reverse=True)
+                            key=lambda kv: (-value_of.get(kv[0], 0.0), kv[0]))
             frontier = []
             for k, (c, a) in ranked[: cfg.max_addresses_per_hop]:
                 result.visited[k] = depth + 1

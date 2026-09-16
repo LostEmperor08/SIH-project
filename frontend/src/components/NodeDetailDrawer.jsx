@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { addressExplorer } from "../lib/explorers.js";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
@@ -9,7 +10,7 @@ import {
 import { addToWatchlist, saveDossier } from "../lib/supabase.js";
 import { getMyProfile } from "../lib/auth.js";
 
-export function NodeDetailDrawer({ entity, onClose, onWatchlistUpdated, onDossierUpdated }) {
+export function NodeDetailDrawer({ entity, onClose, onWatchlistUpdated, onDossierUpdated, caseRef }) {
   const [copied, setCopied] = useState(false);
   const [noticeGenerated, setNoticeGenerated] = useState(false);
   const [watchlistAdded, setWatchlistAdded] = useState(false);
@@ -82,10 +83,15 @@ export function NodeDetailDrawer({ entity, onClose, onWatchlistUpdated, onDossie
     try {
       setNoticeGenerated(true);
       await saveDossier({
-        fir_no: "SIH/2026/00412",
-        target_address: address,
+        case_ref: entity.case_ref || caseRef || "SIH/2026/00412",
+        deposit_address: address,
+        target_vasp: entity.exchange_name || entity.vasp || null,
+        total_traced_usdt: Number(balance) || 0,
+        total_traced_inr: Number(inrValue) || 0,
+        confidence: Number.isFinite(Number(riskScore)) ? `${riskScore}%` : null,
         status: "NOTICE_ISSUED",
-        findings: `Cryptographic attribution verified on ${chainName}. Entity classified as ${entityType} with risk score ${riskScore}/100. Total illicit volume traced: ₹${inrValue.toLocaleString()} INR.`,
+        io_name: officerProfile?.full_name || officerProfile?.email || null,
+        title: `Sec 91 notice — ${entityType} on ${chainName} (risk ${riskScore}/100)`,
       });
 
       const noticeText = `CRIMINAL PROCEDURE DIRECTIVE - SECTION 91 CrPC / BNSS S.94
@@ -117,7 +123,12 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
       onDossierUpdated?.();
       setTimeout(() => setNoticeGenerated(false), 2500);
     } catch (err) {
+      // A dossier that failed to file must say so. The old code logged to
+      // the console and still showed the success toast, which is how an
+      // officer ends up believing a notice was recorded when it was not.
       console.error(err);
+      setNoticeGenerated(false);
+      showToast(`✗ Dossier not filed: ${err.message}`);
     }
   };
 
@@ -295,7 +306,7 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
                 <span className="text-white font-extrabold">{watchlistAdded ? "Saved to Supabase" : "Add to Watchlist"}</span>
               </button>
               <a
-                href={`https://polygonscan.com/address/${address}`}
+                href={(addressExplorer(address, node?.chain) ?? '#')}
                 target="_blank"
                 rel="noreferrer"
                 className="border flex items-center justify-center gap-2 rounded-xl border-white/15 bg-white/5 py-3 px-4 font-bold text-slate-200 hover:border-[#E5B83B]/50 hover:text-[#E5B83B] transition cursor-pointer shadow-sm"

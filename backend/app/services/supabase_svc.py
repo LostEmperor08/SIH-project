@@ -242,7 +242,11 @@ class SupabaseService:
         """
         try:
             await self.rpc("append_audit", {
-                "p_action": action, "p_resource": resource,
+                # NOTE: the RPC parameter is p_target, not p_resource. PostgREST
+            # matches functions by NAMED arguments, so a wrong name is a
+            # 404 (PGRST202), not a type error — it looks like the function
+            # is missing when it is actually right there.
+            "p_action": action, "p_target": resource,
                 "p_resource_id": resource_id, "p_detail": detail or {},
             }, token=token)
         except Exception as e:                              # noqa: BLE001
