@@ -46,7 +46,7 @@ function normalizeRpcGraph(payload) {
           hot_wallet_address: vaspNode.id,
           tx_hash: depositEdge?.txHash ?? "",
           deposit_timestamp: depositEdge?.time ?? "",
-          confidence: Math.min(1, Math.max(0, Number(vaspNode.risk ?? 0) / 100)),
+          confidence: vaspNode.vaspAttribution?.confidence ?? 0.85,
           hops: edges.length,
           time_to_attribution_ms: 0,
         }

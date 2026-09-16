@@ -42,31 +42,33 @@ export function normalizeBackendTrace(payload) {
 
   const nodes = rawNodes.map((n) => {
     const d = n.data ?? {};
+    const riskVal = d.riskScore ?? d.risk_score ?? d.risk ?? n.riskScore ?? n.risk_score ?? n.risk ?? 0;
     return {
       id: d.address ?? n.id,
       label: d.label ?? d.address ?? n.id,
       type: nodeType(d),
-      balance: Number(d.inUsd ?? 0) - Number(d.outUsd ?? 0),
-      firstSeen: d.firstSeen ?? null,
-      risk: d.riskScore ?? 0,
-      riskBand: d.riskBand ?? null,
-      sanctionFloorApplied: !!d.sanctionFloorApplied,
-      sanctionFloorReason: d.sanctionFloorReason ?? null,
-      vaspAttribution: d.vaspAttribution ?? null,
-      transactionAggregates: d.transactionAggregates ?? {},
-      txCount: d.degree ?? 0,
+      balance: Number(d.inUsd ?? d.in_usd ?? 0) - Number(d.outUsd ?? d.out_usd ?? 0),
+      firstSeen: d.firstSeen ?? d.first_seen ?? null,
+      risk: Number(riskVal),
+      riskScore: Number(riskVal),
+      riskBand: d.riskBand ?? d.risk_band ?? null,
+      sanctionFloorApplied: !!(d.sanctionFloorApplied ?? d.sanction_floor_applied),
+      sanctionFloorReason: d.sanctionFloorReason ?? d.sanction_floor_reason ?? null,
+      vaspAttribution: d.vaspAttribution ?? d.vasp_attribution ?? null,
+      transactionAggregates: d.transactionAggregates ?? d.transaction_aggregates ?? {},
+      txCount: d.degree ?? d.tx_count ?? 0,
       chain: d.chain,
-      sanctioned: !!d.sanctioned,
+      sanctioned: !!(d.sanctioned ?? d.is_sanctioned),
       hop: d.hop,
       // carried through so the detail drawer can show WHY a wallet scored
       factors: d.factors ?? [],
       narrative: d.narrative ?? null,
-      recommendedActions: d.recommendedActions ?? [],
-      hopsToExchange: d.hopsToExchange ?? null,
-      hopsToSanctioned: d.hopsToSanctioned ?? null,
-      explorerUrl: d.explorerUrl ?? null,
-      inUsd: Number(d.inUsd ?? 0),
-      outUsd: Number(d.outUsd ?? 0),
+      recommendedActions: d.recommendedActions ?? d.recommended_actions ?? [],
+      hopsToExchange: d.hopsToExchange ?? d.hops_to_exchange ?? null,
+      hopsToSanctioned: d.hopsToSanctioned ?? d.hops_to_sanctioned ?? null,
+      explorerUrl: d.explorerUrl ?? d.explorer_url ?? null,
+      inUsd: Number(d.inUsd ?? d.in_usd ?? 0),
+      outUsd: Number(d.outUsd ?? d.out_usd ?? 0),
     };
   });
 

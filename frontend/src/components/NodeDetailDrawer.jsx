@@ -49,7 +49,7 @@ export function NodeDetailDrawer({ entity, onClose, onWatchlistUpdated, onDossie
   const entityType = entity.type || entity.classification || (isTransaction ? "ON-CHAIN TRANSFER" : "INTERMEDIARY");
   const balance = entity.value_usdt != null ? entity.value_usdt : (entity.amount != null ? entity.amount : (entity.balance != null ? entity.balance : 0));
   const inrValue = entity.value_inr || Math.round(Number(balance) * 88.5);
-  const riskScore = entity.risk_score || entity.risk || (entityType === "SUSPECT" ? 95 : entityType === "VASP" ? 99 : 75);
+  const riskScore = Math.round(Number(entity.riskScore ?? entity.risk_score ?? entity.risk ?? (entityType === "SUSPECT" ? 95 : 0)));
   const chainName = entity.chain || "Polygon PoS";
   const firstSeen = entity.datetime_ist || (entity.timestamp ? new Date(entity.timestamp).toLocaleString("en-IN") : new Date().toLocaleString("en-IN"));
   const txHash = entity.tx_hash || (entity.txHashes && entity.txHashes[0]) || "";
