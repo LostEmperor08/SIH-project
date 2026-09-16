@@ -96,12 +96,14 @@ export default function DashboardPage() {
       // a trace that succeeded.
       const caseRef = caseRefFor(fir, address);
       setCaseRef(caseRef);
-      sealTraceEvidence(data, caseRef)
+      sealTraceEvidence(data, caseRef, address)
         .then((r) => {
           setEvidenceStatus(
             r.errors.length
-              ? `Sealed ${r.sealed} of ${r.sealed + r.errors.length} records — ${r.errors[0]}`
-              : `${r.sealed} evidence records sealed to ${caseRef}`
+              ? `Sealed ${r.sealed} of ${r.onPath ?? 0} records — ${r.errors[0]}`
+              : `${r.sealed} evidence records sealed to ${caseRef} ` +
+                `(${r.onPath ?? 0} of ${r.considered ?? 0} traced transfers are on ` +
+                `the money path from ${address.slice(0, 10)}…)`
           );
         })
         .catch((e) => setEvidenceStatus(`Evidence sealing failed: ${e.message}`));
@@ -371,6 +373,7 @@ export default function DashboardPage() {
                 onNavigate={handleNav}
                 graph={graph}
                 activeCaseRef={caseRef}
+                caseRef={caseRef}
                 activeFir={firNo}
                 suspectAddress={graph?.nodes?.find(n => n.type === "SUSPECT")?.id}
               />

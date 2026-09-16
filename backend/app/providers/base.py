@@ -71,19 +71,68 @@ def iso(ts: float) -> str:
 
 
 # =====================================================================
+class _TokenBucket:
+    """
+    Paces requests to a provider at a fixed rate.
+
+    A semaphore caps how many calls are IN FLIGHT; it says nothing about how
+    many start per second. Three concurrent calls that each take 80ms is 37
+    requests/second, which is seven times Etherscan's free-tier limit. That
+    is why traces were coming back with different node counts each run: some
+    calls were being refused, their branch was pruned, and WHICH ones were
+    refused changed with network timing.
+
+    Pacing is the fix. Being refused and retrying costs more wall-clock than
+    simply not exceeding the limit in the first place.
+    """
+
+    def __init__(self, rate_per_second: float):
+        self.rate = max(rate_per_second, 0.1)
+        self._interval = 1.0 / self.rate
+        self._next = 0.0
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            now = asyncio.get_running_loop().time()
+            wait = self._next - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+                now = self._next
+            self._next = now + self._interval
+
+
 class HttpClient:
     """
-    Shared async client with retry, backoff and a concurrency gate.
+    Shared async client with retry, backoff, a concurrency gate, per-provider
+    pacing and a response cache.
 
-    The gate matters more than it looks. A 3-hop trace fans out to hundreds
-    of upstream calls; firing them at once gets you rate-limited into a
-    failed demo. Six concurrent is the sweet spot for these free tiers.
+    The cache is what makes a trace REPRODUCIBLE within its TTL: re-running
+    the same address returns the same upstream payloads, so the same graph,
+    rather than a differently-rate-limited sample of it.
     """
 
     def __init__(self, cfg: Settings):
         self.cfg = cfg
         self._sem = asyncio.Semaphore(cfg.chain_concurrency)
         self._client: httpx.AsyncClient | None = None
+        # One bucket per provider host. Etherscan's limit is per key, and
+        # Etherscan V2 serves eth/polygon/bsc off ONE key — so they share a
+        # bucket. Getting this wrong is the whole bug.
+        self._buckets: dict[str, _TokenBucket] = {
+            "etherscan": _TokenBucket(cfg.etherscan_rps),
+            "trongrid": _TokenBucket(cfg.trongrid_rps),
+            "default": _TokenBucket(cfg.default_provider_rps),
+        }
+        self._cache: dict[str, tuple[float, Any]] = {}
+        self.stats = {"requests": 0, "cache_hits": 0, "rate_limit_retries": 0}
+
+    def _bucket_for(self, url: str) -> _TokenBucket:
+        if "etherscan" in url:
+            return self._buckets["etherscan"]
+        if "trongrid" in url or "trx" in url:
+            return self._buckets["trongrid"]
+        return self._buckets["default"]
 
     async def __aenter__(self) -> "HttpClient":
         self._client = httpx.AsyncClient(
@@ -101,14 +150,35 @@ class HttpClient:
 
     async def get_json(
         self, url: str, *, chain: str = "?", headers: dict | None = None,
+        rate_limited: Any = None, cache: bool = True,
     ) -> Any:
+        """
+        `rate_limited` is a predicate over a decoded 200 body.
+
+        It exists because Etherscan does not answer a rate limit with HTTP
+        429. It answers 200 with {"status":"0","message":"Max rate limit
+        reached"} — an ordinary success as far as HTTP is concerned. Without
+        this hook the retry loop never fired, the caller raised, and the
+        address's whole branch silently vanished from the graph.
+        """
         if self._client is None:
             raise RuntimeError("HttpClient used outside its context manager")
+
+        ttl = self.cfg.provider_cache_seconds
+        if cache and ttl > 0:
+            hit = self._cache.get(url)
+            if hit and asyncio.get_running_loop().time() - hit[0] < ttl:
+                self.stats["cache_hits"] += 1
+                return hit[1]
+
+        bucket = self._bucket_for(url)
 
         async with self._sem:
             last: Exception | None = None
             for attempt in range(self.cfg.provider_retries + 1):
                 try:
+                    await bucket.acquire()
+                    self.stats["requests"] += 1
                     res = await self._client.get(url, headers=headers)
                     if res.status_code == 404:
                         return None                       # unused address
@@ -119,7 +189,15 @@ class HttpClient:
                         # 4xx other than 429 is our fault — do not retry
                         raise ProviderError(
                             chain, f"{res.status_code} {res.text[:200]}", res.status_code)
-                    return res.json()
+                    body = res.json()
+
+                    if rate_limited is not None and rate_limited(body):
+                        self.stats["rate_limit_retries"] += 1
+                        raise ProviderError(chain, "provider rate limit (200 body)", 429)
+
+                    if cache and ttl > 0:
+                        self._cache[url] = (asyncio.get_running_loop().time(), body)
+                    return body
                 except (httpx.HTTPError, ProviderError) as e:
                     last = e
                     if isinstance(e, ProviderError) and e.status_code \

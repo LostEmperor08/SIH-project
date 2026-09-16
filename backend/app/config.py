@@ -69,6 +69,22 @@ class Settings(BaseSettings):
     provider_timeout_seconds: float = 15.0
     provider_retries: int = 3
 
+    # Requests per second, PER PROVIDER. Concurrency limits how many calls
+    # are in flight; it does not limit how many start per second. Three
+    # concurrent 80ms calls is 37 req/s — seven times Etherscan's free
+    # ceiling. These are the ceilings; the client paces to them.
+    #   Etherscan free: 5/s per key, and one key serves eth+polygon+bsc.
+    #   TronGrid free:  ~15/s with a key, far less without one.
+    etherscan_rps: float = 4.0
+    trongrid_rps: float = 8.0
+    default_provider_rps: float = 6.0
+
+    # Re-running the same trace inside this window replays cached upstream
+    # payloads, so it is FAST and — more importantly — IDENTICAL. Without
+    # it, a second run re-samples a rate-limited API and returns a different
+    # graph, which makes the tool look like it is guessing.
+    provider_cache_seconds: int = 900
+
     # ---- providers ------------------------------------------------------
     # Bitcoin: Blockstream Esplora, keyless.
     btc_api: str = "https://blockstream.info/api"

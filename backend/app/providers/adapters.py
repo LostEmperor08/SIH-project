@@ -156,6 +156,26 @@ async def btc_history(
 # =====================================================================
 # EVM — Etherscan V2 multichain (Ethereum, Polygon, BSC)
 # =====================================================================
+# Etherscan answers a rate limit with HTTP 200 and this in the body, so the
+# transport layer sees a perfectly successful request. Detecting it here is
+# what turns a silently-pruned branch into a retry.
+def _etherscan_rate_limited(body) -> bool:
+    if not isinstance(body, dict):
+        return False
+    if body.get("status") != "0":
+        return False
+    text = f"{body.get('message') or ''} {body.get('result') or ''}".lower()
+    return ("rate limit" in text or "max calls" in text
+            or "too many" in text or "max rate" in text)
+
+
+def _trongrid_rate_limited(body) -> bool:
+    if not isinstance(body, dict):
+        return False
+    err = str(body.get("Error") or body.get("error") or "").lower()
+    return "rate" in err and "limit" in err
+
+
 async def _etherscan_call(
     chain: str, action: str, address: str, cap: int,
     http: HttpClient, cfg: Settings,
@@ -174,28 +194,22 @@ async def _etherscan_call(
     url = (f"{cfg.etherscan_api}?chainid={chain_id}&module=account"
            f"&action={action}&address={address}&page=1"
            f"&offset={min(cap, 100)}&sort=desc&apikey={cfg.etherscan_api_key}")
-    for attempt in range(4):
-        j = await http.get_json(url, chain=chain)
-        if not isinstance(j, dict):
+    j = await http.get_json(url, chain=chain,
+                            rate_limited=_etherscan_rate_limited)
+    if not isinstance(j, dict):
+        return []
+
+    # Etherscan signals "no data" as status 0 with a specific message, which
+    # is not an error. Anything else at status 0 is (bad key, rate limit).
+    if j.get("status") == "0":
+        msg = str(j.get("message") or "")
+        result = str(j.get("result") or "")
+        if "No transactions found" in msg or "No transactions found" in result:
             return []
+        raise ProviderError(chain, result or msg or "unknown Etherscan error")
 
-        # Etherscan signals "no data" as status 0 with a specific message, which
-        # is not an error. Anything else at status 0 is (bad key, rate limit).
-        if j.get("status") == "0":
-            msg = str(j.get("message") or "")
-            result = str(j.get("result") or "")
-            if "No transactions found" in msg or "No transactions found" in result:
-                return []
-            err_text = f"{result} {msg}".lower()
-            if "rate limit" in err_text or "max calls" in err_text or "limit reached" in err_text:
-                if attempt < 3:
-                    await asyncio.sleep(0.45 * (attempt + 1))
-                    continue
-            raise ProviderError(chain, result or msg or "unknown Etherscan error")
-
-        rows = j.get("result")
-        return rows if isinstance(rows, list) else []
-    return []
+    rows = j.get("result")
+    return rows if isinstance(rows, list) else []
 
 
 async def etherscan_history(
@@ -292,7 +306,8 @@ async def tron_history(
     if include_tokens:
         url = (f"{cfg.tron_api}/v1/accounts/{address}/transactions/trc20"
                f"?limit={limit}&only_confirmed=true&order_by=block_timestamp,desc")
-        j = await http.get_json(url, chain="tron", headers=headers)
+        j = await http.get_json(url, chain="tron", headers=headers,
+                                rate_limited=_trongrid_rate_limited)
         for i, t in enumerate((j or {}).get("data") or []):
             frm, to = t.get("from"), t.get("to")
             if not frm or not to:
@@ -322,7 +337,8 @@ async def tron_history(
     # ---- native TRX --------------------------------------------------
     url = (f"{cfg.tron_api}/v1/accounts/{address}/transactions"
            f"?limit={limit}&only_confirmed=true&order_by=block_timestamp,desc")
-    j = await http.get_json(url, chain="tron", headers=headers)
+    j = await http.get_json(url, chain="tron", headers=headers,
+                            rate_limited=_trongrid_rate_limited)
 
     for tx in (j or {}).get("data") or []:
         try:

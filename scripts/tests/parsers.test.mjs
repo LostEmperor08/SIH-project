@@ -183,6 +183,82 @@ ok("Blockscout URL well formed",
    url === "https://eth.blockscout.com/api/v2/addresses/0xabc/transactions");
 
 // =====================================================================
+// Evidence path filter — the ledger must contain THIS case, not the
+// neighbourhood. A 2-hop graph is mostly transfers between third parties
+// who merely appear near the suspect; sealing those into a Sec 65B ledger
+// produces a document that overstates what was traced.
+// =====================================================================
+console.log("\nEvidence money-path filter");
+const { pathEdges } = await import("../../frontend/src/lib/moneyPath.js");
+
+//        victim --> SUSPECT --> mule --> exchange
+//        stranger1 --> stranger2          (nothing to do with the case)
+const graph = {
+  nodes: [
+    { id: "0xsuspect", type: "SUSPECT", hop: 0, risk: 90 },
+    { id: "0xvictim", type: "INTERMEDIARY", hop: 1, risk: 5 },
+    { id: "0xmule", type: "INTERMEDIARY", hop: 1, risk: 60 },
+    { id: "0xexchange", type: "VASP", hop: 2, risk: 40 },
+    { id: "0xstranger1", type: "INTERMEDIARY", hop: 2, risk: 10 },
+    { id: "0xstranger2", type: "INTERMEDIARY", hop: 2, risk: 10 },
+  ],
+  edges: [
+    { source: "0xvictim", target: "0xsuspect", amount: 5000, tx_hash: "a" },
+    { source: "0xsuspect", target: "0xmule", amount: 4800, tx_hash: "b" },
+    { source: "0xmule", target: "0xexchange", amount: 4700, tx_hash: "c" },
+    // The one that was polluting the ledger: huge, and entirely unrelated.
+    { source: "0xstranger1", target: "0xstranger2", amount: 999999, tx_hash: "z" },
+  ],
+};
+
+const kept = pathEdges(graph, "0xsuspect");
+const hashes = kept.map((e) => e.tx_hash).sort();
+eq("keeps only the money path", hashes, ["a", "b", "c"]);
+eq("excludes the unrelated high-value transfer",
+   kept.some((e) => e.tx_hash === "z"), false);
+eq("inbound funding is hop 0",
+   kept.find((e) => e.tx_hash === "a").hop, 0);
+eq("first outward hop is 1",
+   kept.find((e) => e.tx_hash === "b").hop, 1);
+eq("second outward hop is 2",
+   kept.find((e) => e.tx_hash === "c").hop, 2);
+eq("ordered nearest-the-suspect first",
+   kept.map((e) => e.hop), [0, 1, 2]);
+ok("classifies direction",
+   kept.find((e) => e.tx_hash === "a").direction === "INBOUND DEPOSIT" &&
+   kept.find((e) => e.tx_hash === "b").direction === "OUTWARD SWEEP");
+eq("no suspect in the graph seals nothing, rather than sealing the wrong thing",
+   pathEdges({ nodes: [{ id: "0xa", type: "INTERMEDIARY", hop: 1 }],
+               edges: [{ source: "0xa", target: "0xb", amount: 1 }] }, null).length, 0);
+eq("a cycle terminates", pathEdges({
+     nodes: [{ id: "0xs", type: "SUSPECT", hop: 0 }],
+     edges: [{ source: "0xs", target: "0xb", amount: 1, tx_hash: "p" },
+             { source: "0xb", target: "0xs", amount: 1, tx_hash: "q" }],
+   }, "0xs").length, 2);
+eq("address match is case-insensitive",
+   pathEdges(graph, "0xSUSPECT").length, 3);
+
+// =====================================================================
+// Etherscan answers a rate limit with HTTP 200. If that is not detected,
+// the retry never fires, the branch is silently pruned, and the same
+// trace returns a different node count every run.
+// =====================================================================
+console.log("\nEtherscan rate-limit detection");
+const isRateLimited = (b) => {
+  if (!b || typeof b !== "object") return false;
+  if (b.status !== "0") return false;
+  const t = `${b.message || ""} ${b.result || ""}`.toLowerCase();
+  return t.includes("rate limit") || t.includes("max calls") ||
+         t.includes("too many") || t.includes("max rate");
+};
+ok("detects 'Max rate limit reached'",
+   isRateLimited({ status: "0", message: "NOTOK", result: "Max rate limit reached" }));
+eq("an empty address is NOT a rate limit",
+   isRateLimited({ status: "0", message: "No transactions found", result: [] }), false);
+eq("a successful response is NOT a rate limit",
+   isRateLimited({ status: "1", message: "OK", result: [{}] }), false);
+
+// =====================================================================
 console.log("\n" + "=".repeat(62));
 console.log(`${passed} passed, ${failed} failed`);
 console.log("=".repeat(62));

@@ -11,6 +11,7 @@
 // So: never .insert() into evidence_ledger. Always go through the RPC.
 // =====================================================================
 import { isSupabaseConfigured, supabase } from "./supabase.js";
+import { pathEdges } from "./moneyPath.js";
 
 /**
  * Seal one traced hop as a chain-linked evidence record.
@@ -37,28 +38,28 @@ export async function sealEvidence(item, caseRef) {
 }
 
 /**
- * Seal an entire traced graph as an evidence chain.
+ * Seal the traced money path as an evidence chain.
  *
  * Runs sequentially on purpose. Each record's hash depends on the previous
  * one, so sealing in parallel would race and produce a chain that cannot
  * verify.
  */
-export async function sealTraceEvidence(graph, caseRef) {
-  if (!graph?.edges?.length) return { sealed: 0, caseRef, errors: [] };
+export { pathEdges };
 
-  const riskOf = new Map((graph.nodes ?? []).map((n) => [n.id, n.risk ?? 0]));
+export async function sealTraceEvidence(graph, caseRef, targetAddress) {
+  const ordered = pathEdges(graph, targetAddress).slice(0, 60);
+  if (!ordered.length) {
+    return { sealed: 0, caseRef, considered: graph?.edges?.length ?? 0, errors: [] };
+  }
 
-  // Highest-value first: the biggest movements are the ones an officer
-  // needs in the dossier, and if a seal fails partway those are already in.
-  const ordered = [...graph.edges].sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0)).slice(0, 50);
+  const riskOf = new Map((graph?.nodes ?? []).map((n) => [n.id, n.risk ?? 0]));
 
   let sealed = 0;
   const errors = [];
-  for (let i = 0; i < ordered.length; i++) {
-    const e = ordered[i];
+  for (const e of ordered) {
     try {
       await sealEvidence({
-        hop: i + 1,
+        hop: e.hop,
         chain: e.chain ?? graph.nodes?.[0]?.chain ?? "unknown",
         tx_hash: e.tx_hash,
         from_addr: e.source,
@@ -69,12 +70,13 @@ export async function sealTraceEvidence(graph, caseRef) {
       }, caseRef);
       sealed++;
     } catch (err) {
-      errors.push(`hop ${i + 1}: ${err.message}`);
+      errors.push(`hop ${e.hop}: ${err.message}`);
       // One bad row must not abandon the rest of the chain.
       if (errors.length > 5) break;
     }
   }
-  return { sealed, caseRef, errors };
+  return { sealed, caseRef, considered: graph?.edges?.length ?? 0,
+           onPath: ordered.length, errors };
 }
 
 /** Prove the chain for a case: per item, INTACT or TAMPERED. */
