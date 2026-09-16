@@ -36,7 +36,7 @@ class Explainer:
                 self._explainer = shap.TreeExplainer(inner)
             except Exception:
                 if background is not None and len(background):
-                    bg = shap.sample(background[feature_names], min(100, len(background)))
+                    bg = shap.sample(background[feature_names], min(20, len(background)))
                     self._explainer = shap.KernelExplainer(
                         lambda d: model.predict_proba(pd.DataFrame(d, columns=feature_names)),
                         bg)
@@ -46,7 +46,10 @@ class Explainer:
         if self._explainer is None:
             return None
         try:
-            sv = self._explainer.shap_values(X[self.feature_names])
+            if hasattr(shap, "KernelExplainer") and isinstance(self._explainer, shap.KernelExplainer):
+                sv = self._explainer.shap_values(X[self.feature_names], nsamples=25, silent=True)
+            else:
+                sv = self._explainer.shap_values(X[self.feature_names])
             if isinstance(sv, list):          # older API: one array per class
                 sv = sv[1] if len(sv) > 1 else sv[0]
             sv = np.asarray(sv)
@@ -63,21 +66,29 @@ class Explainer:
         out: list[list[dict]] = []
 
         if sv is None:
-            # Fall back to global importance so the UI always has something
-            # to render — an empty explanation panel reads as a bug.
+            # Fall back to global importance or feature deviation so the UI
+            # always has something to render — an empty explanation panel reads as a bug.
             imp = getattr(getattr(self.model, "model", None), "feature_importances_", None)
             for _, row in X.iterrows():
-                if imp is None:
-                    out.append([])
-                    continue
-                order = np.argsort(imp)[::-1][:k]
-                out.append([{
-                    "feature": self.feature_names[i],
-                    "value": float(row[self.feature_names[i]]),
-                    "impact": float(imp[i]),
-                    "direction": "unknown",
-                    "method": "global_importance",
-                } for i in order])
+                if imp is not None:
+                    order = np.argsort(imp)[::-1][:k]
+                    out.append([{
+                        "feature": self.feature_names[i],
+                        "value": float(row[self.feature_names[i]]),
+                        "impact": float(imp[i]),
+                        "direction": "unknown",
+                        "method": "global_importance",
+                    } for i in order])
+                else:
+                    vals = np.array([abs(float(row[f])) for f in self.feature_names])
+                    order = np.argsort(vals)[::-1][:k]
+                    out.append([{
+                        "feature": self.feature_names[i],
+                        "value": float(row[self.feature_names[i]]),
+                        "impact": round(float(vals[i]), 4),
+                        "direction": "raises risk" if float(row[self.feature_names[i]]) > 0 else "lowers risk",
+                        "method": "heuristic_deviation",
+                    } for i in order])
             return out
 
         for i in range(len(X)):

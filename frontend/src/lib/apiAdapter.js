@@ -118,6 +118,7 @@ export function normalizeBackendTrace(payload) {
     nodes,
     edges,
     attribution,
+    transactions: payload?.transactions ?? [],
     stats: payload?.stats ?? null,
     prices: payload?.prices ?? null,
     providerErrors: payload?.providerErrors ?? [],

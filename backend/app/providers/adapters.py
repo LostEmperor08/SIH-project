@@ -20,6 +20,7 @@ real address with zero native transactions and all activity in ERC-20.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any

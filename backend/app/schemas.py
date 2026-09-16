@@ -171,6 +171,7 @@ class TraceResponse(BaseModel):
     prices: dict[str, Any]
     providerErrors: list[str] = []
     graph: Graph
+    transactions: list[dict[str, Any]] = []
     elapsedMs: int
 
 

@@ -1,17 +1,19 @@
 import React, { useState, useEffect } from "react";
-import { addressExplorer } from "../lib/explorers.js";
+import { addressExplorer, txExplorer } from "../lib/explorers.js";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   AlertTriangle, ArrowDownLeft, ArrowUpRight, Check, 
   Clock3, Copy, Database, ExternalLink, FileText, Fingerprint, 
-  Layers, Shield, ShieldAlert, Sparkles, Wallet, X, Zap 
+  Layers, Shield, ShieldAlert, Sparkles, Wallet, X, Zap, ArrowRight
 } from "lucide-react";
 import { addToWatchlist, saveDossier } from "../lib/supabase.js";
 import { getMyProfile } from "../lib/auth.js";
 
 export function NodeDetailDrawer({ entity, onClose, onWatchlistUpdated, onDossierUpdated, caseRef }) {
   const [copied, setCopied] = useState(false);
+  const [copiedOrigin, setCopiedOrigin] = useState(false);
+  const [copiedTarget, setCopiedTarget] = useState(false);
   const [noticeGenerated, setNoticeGenerated] = useState(false);
   const [watchlistAdded, setWatchlistAdded] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
@@ -35,16 +37,23 @@ export function NodeDetailDrawer({ entity, onClose, onWatchlistUpdated, onDossie
 
   if (!entity) return null;
 
-  const address = entity.id || entity.origin_sender || entity.counterparty || entity.address || "0x...";
-  const title = entity.label || entity.origin_label || entity.counterparty_label || (entity.type ? `${entity.type}` : "On-Chain Entity");
-  const entityType = entity.type || entity.classification_type?.toUpperCase() || (entity.classification === "OUTWARD SWEEP" ? "INTERMEDIARY" : entity.classification === "INBOUND DEPOSIT" ? "SUSPECT" : "VASP");
-  const balance = entity.balance != null ? entity.balance : (entity.value_usdt != null ? entity.value_usdt : 412.50);
-  const inrValue = entity.value_inr || Math.round(Number(balance) * 89);
-  const riskScore = entity.risk_score || (entityType === "SUSPECT" ? 96 : entityType === "VASP" ? 99 : 88);
+  const originAddr = entity.from_addr || entity.origin_sender || entity.source || "";
+  const targetAddr = entity.to_addr || entity.counterparty || entity.target || "";
+  const isTransaction = Boolean(originAddr && targetAddr);
+
+  const address = entity.id || entity.address || originAddr || targetAddr || "0x...";
+  const title = isTransaction 
+    ? `Hop #${entity.hop || 1} On-Chain Transfer`
+    : (entity.label || entity.origin_label || (entity.type ? `${entity.type}` : "On-Chain Entity"));
+  
+  const entityType = entity.type || entity.classification || (isTransaction ? "ON-CHAIN TRANSFER" : "INTERMEDIARY");
+  const balance = entity.value_usdt != null ? entity.value_usdt : (entity.amount != null ? entity.amount : (entity.balance != null ? entity.balance : 0));
+  const inrValue = entity.value_inr || Math.round(Number(balance) * 88.5);
+  const riskScore = entity.risk_score || entity.risk || (entityType === "SUSPECT" ? 95 : entityType === "VASP" ? 99 : 75);
   const chainName = entity.chain || "Polygon PoS";
-  const firstSeen = entity.datetime_ist || (entity.firstSeen ? new Date(entity.firstSeen).toLocaleString("en-IN") : "4/9/2026, 9:10:00 am");
-  const txHash = entity.tx_hash || "0x3a8f9c12b7e408d621f0b9e847c201a64f5e8d9b1c2a3e4f5a6b7c8d9e0f1a2b";
-  const blockNum = entity.block_number || 62918234;
+  const firstSeen = entity.datetime_ist || (entity.timestamp ? new Date(entity.timestamp).toLocaleString("en-IN") : new Date().toLocaleString("en-IN"));
+  const txHash = entity.tx_hash || (entity.txHashes && entity.txHashes[0]) || "";
+  const blockNum = entity.block_number || entity.block_height || null;
 
   const showToast = (msg) => {
     setToastMsg(msg);
@@ -198,91 +207,158 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto px-6 sm:px-7 py-6 space-y-5">
-          {/* Address Identifier Box */}
-          <div className="border rounded-2xl border-white/10 bg-white/[0.04] p-4 sm:p-5 shadow-sm">
-            <div className="flex items-center justify-between text-slate-400 mb-2.5">
-              <span className="flex items-center gap-2 font-medium text-slate-200">
-                <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#d8b84d]/20 text-[#d8b84d]">
-                  <Wallet size={14} />
+          {/* Transfer Flow or Address Box */}
+          {isTransaction ? (
+            <div className="border rounded-2xl border-white/10 bg-white/[0.04] p-4 sm:p-5 shadow-sm space-y-3">
+              <div className="flex items-center justify-between text-slate-400">
+                <span className="flex items-center gap-2 font-medium text-slate-200">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#d8b84d]/20 text-[#d8b84d]">
+                    <Layers size={14} />
+                  </div>
+                  Transfer Flow
+                </span>
+                <span className="border rounded-lg border-white/10 bg-black/40 px-3 py-1 text-slate-300 font-mono text-xs">
+                  {chainName}
+                </span>
+              </div>
+
+              {/* Origin -> Target visual */}
+              <div className="space-y-2 font-mono text-xs">
+                <div className="border rounded-xl border-white/5 bg-black/60 p-3 flex items-center justify-between">
+                  <div className="truncate mr-2">
+                    <span className="text-slate-400 block text-[10px] font-sans uppercase font-bold">Sender / Origin</span>
+                    <span className="text-slate-200 font-semibold">{originAddr}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigator.clipboard.writeText(originAddr);
+                      setCopiedOrigin(true);
+                      setTimeout(() => setCopiedOrigin(false), 2000);
+                    }}
+                    className="shrink-0 p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200"
+                    title="Copy sender address"
+                  >
+                    {copiedOrigin ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                  </button>
                 </div>
-                Address Identifier
-              </span>
-              <span className="border rounded-lg border-white/10 bg-black/40 px-3 py-1 text-slate-300 font-mono">
-                {chainName}
-              </span>
+
+                <div className="flex justify-center text-[#d8b84d]">
+                  <ArrowRight size={16} className="rotate-90 sm:rotate-0" />
+                </div>
+
+                <div className="border rounded-xl border-white/5 bg-black/60 p-3 flex items-center justify-between">
+                  <div className="truncate mr-2">
+                    <span className="text-slate-400 block text-[10px] font-sans uppercase font-bold">Recipient / Counterparty</span>
+                    <span className="text-slate-200 font-semibold">{targetAddr}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigator.clipboard.writeText(targetAddr);
+                      setCopiedTarget(true);
+                      setTimeout(() => setCopiedTarget(false), 2000);
+                    }}
+                    className="shrink-0 p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200"
+                    title="Copy recipient address"
+                  >
+                    {copiedTarget ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="border flex items-center justify-between gap-3 rounded-xl border-white/5 bg-black/60 px-4 py-3 font-mono text-slate-200">
-              <span className="truncate select-all sm:text-sm font-semibold text-white">{address}</span>
-              <button
-                type="button"
-                onClick={copyAddress}
-                className="border flex shrink-0 items-center gap-1.5 rounded-lg border-white/15 bg-white/10 px-3 py-1.5 font-medium text-slate-200 hover:bg-white/20 hover:text-white transition cursor-pointer shadow-sm"
-              >
-                {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
-                {copied ? "Copied" : "Copy"}
-              </button>
+          ) : (
+            <div className="border rounded-2xl border-white/10 bg-white/[0.04] p-4 sm:p-5 shadow-sm">
+              <div className="flex items-center justify-between text-slate-400 mb-2.5">
+                <span className="flex items-center gap-2 font-medium text-slate-200">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#d8b84d]/20 text-[#d8b84d]">
+                    <Wallet size={14} />
+                  </div>
+                  Address Identifier
+                </span>
+                <span className="border rounded-lg border-white/10 bg-black/40 px-3 py-1 text-slate-300 font-mono text-xs">
+                  {chainName}
+                </span>
+              </div>
+              <div className="border flex items-center justify-between gap-3 rounded-xl border-white/5 bg-black/60 px-4 py-3 font-mono text-slate-200">
+                <span className="truncate select-all sm:text-sm font-semibold text-white">{address}</span>
+                <button
+                  type="button"
+                  onClick={copyAddress}
+                  className="border flex shrink-0 items-center gap-1.5 rounded-lg border-white/15 bg-white/10 px-3 py-1.5 font-medium text-slate-200 hover:bg-white/20 hover:text-white transition cursor-pointer shadow-sm"
+                >
+                  {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                  {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Key Metrics Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="border rounded-2xl border-white/10 bg-white/[0.04] p-5 shadow-sm">
-              <span className="uppercase tracking-wider text-slate-400 font-semibold">Traced Volume</span>
+              <span className="uppercase tracking-wider text-slate-400 font-semibold text-xs">Traced Value</span>
               <div className="mt-2 sm:text-2xl font-bold text-white font-mono">
                 {Number(balance).toLocaleString()} USDT
               </div>
-              <div className="font-semibold text-emerald-400 mt-1">
+              <div className="font-semibold text-emerald-400 mt-1 text-xs sm:text-sm">
                 ≈ ₹{inrValue.toLocaleString()} INR
               </div>
             </div>
 
             <div className="border rounded-2xl border-white/10 bg-white/[0.04] p-5 shadow-sm">
-              <span className="uppercase tracking-wider text-slate-400 font-semibold">Risk Assessment</span>
+              <span className="uppercase tracking-wider text-slate-400 font-semibold text-xs">Risk Assessment</span>
               <div className="mt-2 flex items-center gap-2">
                 <span className="sm:text-2xl font-bold text-amber-400 font-mono">{riskScore}/100</span>
-                <span className="border rounded-full bg-amber-500/15 px-2.5 py-0.5 font-bold text-amber-300 border-amber-500/30">
+                <span className="border rounded-full bg-amber-500/15 px-2.5 py-0.5 font-bold text-amber-300 border-amber-500/30 text-xs">
                   {riskScore >= 90 ? "CRITICAL" : "HIGH"}
                 </span>
               </div>
-              <div className="text-slate-400 mt-1">Mule Layering Detected</div>
+              <div className="text-slate-400 mt-1 text-xs">Mule Layering Detected</div>
             </div>
           </div>
 
           {/* Entity Typology Badge */}
           <div className="border rounded-2xl border-white/10 bg-white/[0.04] p-5 shadow-sm">
-            <span className="uppercase tracking-wider text-slate-400 font-semibold">Entity Typology</span>
+            <span className="uppercase tracking-wider text-slate-400 font-semibold text-xs">Classification & Typology</span>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <span className="border inline-flex items-center gap-1.5 rounded-xl border-[rgba(216,184,77,0.4)] bg-[rgba(216,184,77,0.15)] px-3 py-1.5 font-semibold text-[#d8b84d]">
+              <span className="border inline-flex items-center gap-1.5 rounded-xl border-[rgba(216,184,77,0.4)] bg-[rgba(216,184,77,0.15)] px-3 py-1.5 font-semibold text-[#d8b84d] text-xs">
                 <ShieldAlert size={14} /> {entityType}
               </span>
-              <span className="border inline-flex items-center gap-1.5 rounded-xl border-cyan-500/30 bg-cyan-950/50 px-3 py-1.5 text-cyan-300 font-mono">
+              <span className="border inline-flex items-center gap-1.5 rounded-xl border-cyan-500/30 bg-cyan-950/50 px-3 py-1.5 text-cyan-300 font-mono text-xs">
                 <Layers size={14} /> Peel Chain Pattern
               </span>
-              <span className="inline-flex items-center gap-1.5 rounded-xl border-purple-500/30 bg-purple-950/50 px-3 py-1.5 text-purple-300">
-                <Zap size={14} /> Instant Sweep Bot
+              <span className="inline-flex items-center gap-1.5 rounded-xl border-purple-500/30 bg-purple-950/50 px-3 py-1.5 text-purple-300 text-xs">
+                <Zap size={14} /> Instant Sweep
               </span>
             </div>
-            <p className="mt-3 leading-relaxed text-slate-300">
-              {entity.audit_notes || "Continuous on-chain graph analysis classifies this node as an automated layering mule utilized for aggregating victim funds before multi-hop VASP deposit."}
+            <p className="mt-3 leading-relaxed text-slate-300 text-xs">
+              {entity.audit_notes || "Continuous on-chain graph analysis classifies this transfer as an automated layering mule movement utilized for aggregating victim funds before multi-hop VASP deposit."}
             </p>
           </div>
 
           {/* Audit Trail Context Box */}
-          <div className="border rounded-2xl border-white/10 bg-white/[0.03] p-4 text-xs space-y-2">
+          <div className="border rounded-2xl border-white/10 bg-white/[0.03] p-4 text-xs space-y-2 font-mono">
+            {blockNum && (
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 font-sans">Ledger Block Height</span>
+                <span className="text-slate-200">#{blockNum.toLocaleString()}</span>
+              </div>
+            )}
             <div className="flex items-center justify-between">
-              <span className="text-slate-400">Ledger Block Height</span>
-              <span className="font-mono text-slate-200">#{blockNum.toLocaleString()}</span>
+              <span className="text-slate-400 font-sans">Observed Timestamp</span>
+              <span className="text-slate-200">{firstSeen}</span>
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-slate-400">Gas Dispersed</span>
-              <span className="font-mono text-slate-200">{entity.gas_fee || "0.0012 MATIC"}</span>
-            </div>
-            <div className="border pt-2.5 border-white/5 flex items-center justify-between">
-              <span className="text-slate-400">Transaction Hash</span>
-              <span className="font-mono text-cyan-400 truncate max-w-[260px]" title={txHash}>
-                {txHash.slice(0, 14)}...{txHash.slice(-10)}
-              </span>
-            </div>
+            {txHash && (
+              <div className="border pt-2.5 border-white/5 flex items-center justify-between">
+                <span className="text-slate-400 font-sans">Transaction Hash</span>
+                <span className="text-cyan-400 truncate max-w-[260px]" title={txHash}>
+                  {txHash.slice(0, 14)}...{txHash.slice(-10)}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Direct Actions with Supabase Persistence (Rolex Gradient Style) */}
@@ -306,13 +382,16 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
                 <span className="text-white font-extrabold">{watchlistAdded ? "Saved to Supabase" : "Add to Watchlist"}</span>
               </button>
               <a
-                href={(addressExplorer(address, node?.chain) ?? '#')}
+                href={
+                  (txHash ? txExplorer(txHash, chainName) : null) ||
+                  (addressExplorer(address, chainName) ?? "#")
+                }
                 target="_blank"
                 rel="noreferrer"
-                className="border flex items-center justify-center gap-2 rounded-xl border-white/15 bg-white/5 py-3 px-4 font-bold text-slate-200 hover:border-[#E5B83B]/50 hover:text-[#E5B83B] transition cursor-pointer shadow-sm"
+                className="border flex items-center justify-center gap-2 rounded-xl border-white/15 bg-white/5 py-3 px-4 text-xs font-bold text-slate-200 hover:border-[#E5B83B]/50 hover:text-[#E5B83B] transition cursor-pointer shadow-sm"
               >
                 <ExternalLink size={14} className="text-slate-400" />
-                Explorer Link
+                {txHash ? "View Tx on Explorer" : "View on Explorer"}
               </a>
             </div>
           </div>
