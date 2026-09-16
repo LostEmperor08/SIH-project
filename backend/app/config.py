@@ -65,12 +65,19 @@ class Settings(BaseSettings):
     provider_retries: int = 3
 
     # ---- providers ------------------------------------------------------
+    # Bitcoin: Blockstream Esplora, keyless.
     btc_api: str = "https://blockstream.info/api"
-    eth_api: str = "https://eth.blockscout.com/api/v2"
-    polygon_api: str = "https://polygon.blockscout.com/api/v2"
-    tron_api: str = "https://apilist.tronscanapi.com"
-    etherscan_api_key: str | None = None          # required for BSC only
-    tronscan_api_key: str | None = None           # optional, raises Tron limits
+
+    # Ethereum / Polygon / BSC: Etherscan V2 multichain. ONE key covers all
+    # of them — chainid selects the chain (1 / 137 / 56). Required.
+    etherscan_api: str = "https://api.etherscan.io/v2/api"
+    etherscan_api_key: str | None = None
+
+    # Tron: TronGrid. The key is OPTIONAL — the API answers without one, but
+    # unkeyed requests are rate-limited hard enough to stall a live trace.
+    tron_api: str = "https://api.trongrid.io"
+    trongrid_api_key: str | None = None
+
     coingecko_url: str = "https://api.coingecko.com/api/v3/simple/price"
     price_cache_seconds: int = 300
 

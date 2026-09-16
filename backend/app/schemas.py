@@ -97,9 +97,14 @@ class GraphNodeData(BaseModel):
     narrative: str | None = None
     typologies: list[dict[str, Any]] = []
     recommendedActions: list[str] = []
+    factors: list[dict[str, Any]] = []
     explanation: list[dict[str, Any]] = []
+    illicitProbability: float | None = None
+    anomalyScore: float | None = None
+    peelDepth: int | None = None
     hopsToExchange: int | None = None
     hopsToSanctioned: int | None = None
+    hopsToMixer: int | None = None
     inUsd: float = 0.0
     outUsd: float = 0.0
     degree: int = 0
@@ -145,7 +150,7 @@ class TraceStats(BaseModel):
     walletsPersisted: int = 0
     transactionsPersisted: int = 0
     scored: int = 0
-    scoringMode: Literal["ml", "rules_only", "none"] = "none"
+    scoringMode: Literal["heuristic", "ml+heuristic", "rules_only", "none"] = "none"
 
 
 class TraceResponse(BaseModel):

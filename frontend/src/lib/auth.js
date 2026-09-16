@@ -26,7 +26,9 @@ export function authBackend() {
 }
 
 const SESSION_KEY = "chakravyuh_officer_session";
-const DOSSIER_REVIEW_KEY = "chakravyuh_mock_reviews";
+// Renamed: these are locally cached review outcomes for optimistic UI,
+// not mock data. The authoritative record is the review_dossier RPC.
+const DOSSIER_REVIEW_KEY = "chakravyuh_review_cache";
 
 // ── OAuth Providers ─────────────────────────────────────────────────────
 export async function signInWithOAuthProvider(provider) {
@@ -83,7 +85,8 @@ export async function signUpOfficer({ email, password, fullName, badgeId, statio
         badge_id: cleanBadge,
         station_code: cleanStation,
         clearance: cleanClearance,
-        role: "investigator",
+        // role intentionally omitted — the database assigns least privilege
+      
         status: "active",
       });
     } catch (profileErr) {
@@ -177,8 +180,13 @@ export async function getMyProfile() {
       badge_id: meta.badge_id || `I4C-${sessionUser.id.slice(0, 6).toUpperCase()}`,
       station_code: meta.station_code || "CYBER-PS-I4C-DELHI",
       clearance: meta.clearance || "Tier 1 - Unit Attribution",
-      role: sessionUser.email?.includes("admin") ? "admin" : "investigator",
-      status: "active",
+      // PRIVILEGE ESCALATION FIX. This previously read:
+      //     role: email.includes("admin") ? "admin" : "investigator"
+      // so signing up as anything@admin.com granted admin. The client never
+      // decides its own privilege level — the database default ('viewer')
+      // applies, and an existing admin promotes the account.
+      // status stays 'pending' until an admin activates it.
+      status: "pending",
       created_at: sessionUser.created_at || new Date().toISOString(),
     };
 
@@ -193,7 +201,8 @@ export async function getMyProfile() {
       badge_id: `I4C-${sessionUser.id.slice(0, 6).toUpperCase()}`,
       station_code: "CYBER-PS-I4C-DELHI",
       clearance: "Tier 1 - Unit Attribution",
-      role: "investigator",
+      // role intentionally omitted — the database assigns least privilege
+      
       status: "active",
     };
   }

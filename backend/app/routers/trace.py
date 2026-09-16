@@ -16,6 +16,7 @@ from ..config import Settings, get_settings
 from ..schemas import TraceRequest, TraceResponse
 from ..security import Officer, rate_limit, require_role
 from ..services.supabase_svc import get_supabase
+from ..services.risk import score_graph
 from ..services.trace import build_graph, trace_multi_hop
 
 log = logging.getLogger("chakravyuh.api.trace")
@@ -79,6 +80,21 @@ async def trace(
     scores: dict = {}
     mode = "none"
     if req.score:
+        # ---- always compute the gateway score first ------------------
+        # It needs no database and no ML service, so an officer always gets
+        # a scored graph. The ML layer refines this when it is reachable;
+        # it is not a prerequisite for getting an answer.
+        scores = score_graph(
+            tr.edges,
+            [t.address for t in req.targets],
+            sanctioned=set(flags.get("sanctioned", [])),
+            mixers=set(flags.get("mixers", [])),
+            exchanges=set(flags.get("exchanges", [])),
+            darknet=set(flags.get("darknet", [])),
+        )
+        mode = "heuristic"
+
+        # ---- then let the ML layer refine it, if available ------------
         primary = req.targets[0].chain
         try:
             ml = await sb.score_with_ml(
@@ -89,21 +105,29 @@ async def trace(
             ml = None
 
         if ml:
-            scores, mode = ml, "ml"
+            mode = "ml+heuristic"
+            for addr, ml_row in ml.items():
+                base = scores.get(addr, {})
+                # Keep the heuristic factors — they are what an officer can
+                # verify by hand — and merge the model's view alongside.
+                base.update({
+                    "risk_score": ml_row.get("risk_score", base.get("risk_score")),
+                    "risk_band": ml_row.get("risk_band", base.get("risk_band")),
+                    "illicit_probability": ml_row.get("illicit_probability"),
+                    "anomaly_score": ml_row.get("anomaly_score"),
+                    "typologies": ml_row.get("typologies", []),
+                    "vasp_attribution": ml_row.get("vasp_attribution"),
+                    "ml_explanation": ml_row.get("explanation", []),
+                })
+                # The sanctions floor outranks the model, always.
+                if base.get("sanction_floor_applied"):
+                    base["risk_score"] = max(base.get("risk_score") or 0, 90.0)
+                    base["risk_band"] = "critical"
+                scores[addr] = base
             try:
-                await sb.save_predictions(primary, ml)
+                await sb.save_predictions(primary, scores)
             except Exception as e:                          # noqa: BLE001
                 log.error("prediction persistence failed: %s", e)
-        else:
-            # Degrade to the deterministic SQL engine. An officer with
-            # rule-based scores is far better served than an error page,
-            # and scoringMode says honestly which one this is.
-            mode = "rules_only"
-            for c in chains:
-                try:
-                    await sb.rpc("run_detection_pipeline", {"p_chain": c})
-                except Exception as e:                      # noqa: BLE001
-                    log.error("rules pipeline failed for %s: %s", c, e)
 
     graph = build_graph(tr, req.targets, wallets, scores)
 

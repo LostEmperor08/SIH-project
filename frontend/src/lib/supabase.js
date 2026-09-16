@@ -1,21 +1,39 @@
 import { createClient } from "@supabase/supabase-js";
 import { readPref, writePref } from "./storage.js";
 
-// Default Supabase project credentials or environment fallback
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://kxyjtwvyzmxhyefgqbco.supabase.co";
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.dummy-key-for-local-fallback";
+// Credentials come from the environment ONLY. Nothing is hardcoded here:
+// a live project URL committed to a public repository is a real disclosure,
+// and a "dummy" key fallback makes an unconfigured build look like it works.
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-export const isSupabaseConfigured = Boolean(
-  import.meta.env.VITE_SUPABASE_URL && 
-  import.meta.env.VITE_SUPABASE_ANON_KEY &&
-  !import.meta.env.VITE_SUPABASE_ANON_KEY.includes("dummy")
-);
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: { persistSession: true },
-});
+if (!isSupabaseConfigured && import.meta.env.DEV) {
+  console.error(
+    "[chakravyuh] VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are not set. " +
+    "Case data is disabled — this build refuses to show placeholder records."
+  );
+}
 
-// Helper to get from LocalStorage or empty list
+// createClient throws on empty strings, so it is only built when configured.
+// Every consumer already guards on isSupabaseConfigured.
+export const supabase = isSupabaseConfigured
+  ? createClient(supabaseUrl, supabaseAnonKey, { auth: { persistSession: true } })
+  : null;
+
+// Case data is NEVER served from browser storage. Showing stale local rows
+// as though they came from the database is the mock-data problem in its
+// purest form — an officer cannot tell a real record from a leftover one.
+// These helpers now only cache UI preferences, never case records.
+function notConfigured(what) {
+  throw new Error(
+    `Cannot load ${what}: Supabase is not configured. ` +
+    "Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY. " +
+    "No offline placeholder data is available by design."
+  );
+}
+
 function getLocal(key, fallback = []) {
   try {
     const val = readPref(`chakravyuh_${key}`);
@@ -43,7 +61,7 @@ export async function fetchWatchlist() {
       console.warn("Supabase watchlist fetch fallback", err);
     }
   }
-  return getLocal("watchlist", []);
+  return notConfigured("the watchlist");
 }
 
 export async function addToWatchlist(item) {
@@ -51,9 +69,15 @@ export async function addToWatchlist(item) {
     id: `w-${Date.now()}`,
     address: item.id || item.address || item.origin_sender || item.counterparty,
     label: item.label || item.origin_label || item.counterparty_label || "Monitored Entity",
-    chain: item.chain || "Polygon PoS",
-    risk: (item.risk_score >= 90 || item.risk === "CRITICAL") ? "CRITICAL" : "HIGH",
-    risk_score: item.risk_score || 92,
+    chain: item.chain || null,
+    risk: item.risk ?? (Number(item.risk_score) >= 80 ? "CRITICAL"
+          : Number(item.risk_score) >= 60 ? "HIGH"
+          : Number(item.risk_score) >= 35 ? "MEDIUM"
+          : Number.isFinite(Number(item.risk_score)) ? "LOW" : "UNSCORED"),
+    // No invented score. If the trace did not produce one, the record
+    // carries null and the UI shows "not scored" rather than a number
+    // nobody can justify.
+    risk_score: Number.isFinite(Number(item.risk_score)) ? Number(item.risk_score) : null,
     reason: item.reason || item.audit_notes || "Added from live investigation trace",
     added_at: new Date().toISOString(),
     status: "ACTIVE_SURVEILLANCE",
@@ -101,7 +125,7 @@ export async function fetchDossiers() {
       console.warn("Supabase dossiers fetch fallback", err);
     }
   }
-  return getLocal("dossiers", []);
+  return notConfigured("dossiers");
 }
 
 export async function saveDossier(dossier) {
@@ -109,7 +133,9 @@ export async function saveDossier(dossier) {
     id: `d-${Date.now()}`,
     case_ref: dossier.case_ref || `SIH/2026/${Math.floor(1000 + Math.random() * 9000)}`,
     title: dossier.title || "Cryptographic Attribution Dossier",
-    target_vasp: dossier.target_vasp || "Binance",
+    // NEVER default the VASP. Naming the wrong exchange sends the freeze
+    // request to the wrong place and burns the only chance to recover funds.
+    target_vasp: dossier.target_vasp || null,
     deposit_address: dossier.deposit_address || "0x...",
     total_traced_usdt: dossier.total_traced_usdt || 0,
     total_traced_inr: dossier.total_traced_inr || 0,
@@ -146,7 +172,7 @@ export async function fetchEvidenceRecords() {
       console.warn("Supabase evidence fetch fallback", err);
     }
   }
-  return getLocal("evidence_records", []);
+  return notConfigured("the evidence ledger");
 }
 
 export async function recordEvidenceItem(item) {

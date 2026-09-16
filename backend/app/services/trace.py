@@ -175,9 +175,17 @@ def build_graph(
                 "narrative": s.get("narrative"),
                 "typologies": s.get("typologies", []),
                 "recommendedActions": s.get("recommended_actions", []),
-                "explanation": s.get("explanation", []),
+                # `factors` is the heuristic breakdown every wallet always
+                # has; `explanation` is the model's SHAP view, present only
+                # when the ML service answered.
+                "factors": s.get("factors", []),
+                "explanation": s.get("ml_explanation", s.get("explanation", [])),
+                "illicitProbability": s.get("illicit_probability"),
+                "anomalyScore": s.get("anomaly_score"),
+                "peelDepth": s.get("peel_chain_depth"),
                 "hopsToExchange": s.get("hops_to_exchange"),
                 "hopsToSanctioned": s.get("hops_to_sanctioned"),
+                "hopsToMixer": s.get("hops_to_mixer"),
                 "inUsd": round(in_usd, 2), "outUsd": round(out_usd, 2),
                 "degree": degree,
                 "explorerUrl": explorer_url(chain, address),

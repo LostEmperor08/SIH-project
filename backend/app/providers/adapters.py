@@ -1,33 +1,100 @@
 """
-Per-chain adapters. Each returns list[NormEdge].
+Live chain adapters. No mock data, no placeholder fallbacks anywhere.
 
-Provider matrix (verified against the live APIs, 15 Sep 2026):
+Verified against the live APIs on 16 Sep 2026:
 
-  btc      Blockstream Esplora   no key
-  eth      Blockscout v2         no key
-  polygon  Blockscout v2         no key
-  tron     TronScan              no key
-  bsc      Etherscan V2          FREE KEY (chainid=56)
+  btc              Blockstream Esplora    no key
+  eth/polygon/bsc  Etherscan V2           ONE key, chainid selects the chain
+  tron             TronGrid               key optional (raises rate limits)
 
-Two behaviours here exist because the live APIs proved them necessary, not
-because they seemed like good ideas:
+Etherscan V2 replaced the old per-chain explorers: one key now covers 60+
+EVM chains and you pick with `chainid` (1 = Ethereum, 137 = Polygon,
+56 = BSC). That is why there is a single `etherscan_history()` here rather
+than three near-identical adapters.
 
-  * Blockscout's `filter` accepts "to" OR "from" and returns HTTP 422 for
-    "to | from". We send no filter at all; unfiltered returns both
-    directions, which is what a trace needs.
-  * Blockstream returns mempool transactions as status {confirmed: false}
-    with NO block_time. Treating one as a settled movement is materially
-    wrong — it can be RBF-replaced and never happen. Excluded by default.
+Every adapter fetches BOTH native transfers and token transfers. This is not
+optional: a token transfer carries `value: 0` in the native transaction, so
+a native-only tracer returns an EMPTY GRAPH for a wallet that moved a
+million dollars of USDT and never touched the gas token. Verified against a
+real address with zero native transactions and all activity in ERC-20.
 """
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from ..config import Settings
 from .base import NATIVE, HttpClient, NormEdge, ProviderError, iso
 
 log = logging.getLogger("chakravyuh.providers")
+
+# Etherscan V2 chain selector
+CHAIN_IDS: dict[str, int] = {"eth": 1, "polygon": 137, "bsc": 56}
+
+
+# =====================================================================
+# Stablecoin valuation
+#
+# A stablecoin transfer IS the money in most crypto fraud — PS 26183 names
+# USDT explicitly. Valuing it 1:1 is correct. Multiplying an arbitrary
+# altcoin by the native gas-token price would invent money that does not
+# exist, so unknown tokens are recorded UNVALUED rather than wrongly valued.
+# =====================================================================
+STABLECOINS = {
+    "USDT", "USDC", "DAI", "BUSD", "TUSD", "USDP", "FDUSD", "PYUSD",
+    "USDE", "USDD", "GUSD", "LUSD", "FRAX", "USDS", "USDB", "CRVUSD",
+}
+
+# Bridged and wrapped variants of the same dollar. Live Polygon data returns
+# "USDT0" (the LayerZero OFT build of Tether) — an exact-match list scored a
+# real USDT transfer as unvalued, which is how $20,000 of laundered stable
+# reads as $0 on the graph. Chain-bridged forms are everywhere in practice:
+# USDT.e, USDC.e, axlUSDC, m.USDT, and so on.
+_STABLE_PREFIXES = ("USDT", "USDC", "DAI", "BUSD", "FDUSD", "PYUSD", "USDE")
+_BRIDGE_AFFIXES = ("E", "B", "0", "N", "BRIDGED", "POS", "AXL", "M", "WORMHOLE", "LZ")
+
+
+def _token_usd(symbol: str, amount: float) -> tuple[float, bool]:
+    """
+    Returns (usd_value, unvalued_flag).
+
+    A dollar stablecoin values 1:1. Anything else is left UNVALUED rather
+    than wrongly valued — multiplying an arbitrary token by the gas-token
+    price would invent money that does not exist.
+    """
+    s = (symbol or "").upper().strip()
+    if not s:
+        return 0.0, True
+    if s in STABLECOINS:
+        return round(amount, 2), False
+
+    # normalise bridged spellings: "USDC.E" / "AXLUSDC" / "USDT0" -> base
+    core = s.replace(".", "").replace("-", "").replace("_", "")
+    for pfx in _STABLE_PREFIXES:
+        if core.startswith(pfx):
+            suffix = core[len(pfx):]
+            if suffix == "" or suffix in _BRIDGE_AFFIXES:
+                return round(amount, 2), False
+        if core.endswith(pfx):
+            prefix = core[: -len(pfx)]
+            if prefix in _BRIDGE_AFFIXES:
+                return round(amount, 2), False
+    return 0.0, True
+
+
+def _safe_int(v: Any, default: int = 18) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
 
 
 # =====================================================================
@@ -45,6 +112,9 @@ async def btc_history(
     for tx in txs[:cap]:
         status = tx.get("status") or {}
         confirmed = status.get("confirmed") is True
+        # A mempool transaction can be RBF-replaced and never happen.
+        # Recording one as a settled fund movement is materially wrong
+        # in an investigation, so it is excluded unless asked for.
         if not confirmed and not include_unconfirmed:
             continue
 
@@ -56,8 +126,8 @@ async def btc_history(
         if not inputs:
             continue                                   # coinbase
         primary = inputs[0]
-        block_time = status.get("block_time")
-        ts = iso(block_time) if block_time else iso(__import__("time").time())
+        bt = status.get("block_time")
+        ts = iso(bt) if bt else iso(time.time())
         fee_btc = (tx.get("fee") or 0) / 1e8
         vouts = tx.get("vout") or []
 
@@ -74,213 +144,253 @@ async def btc_history(
                 from_address=primary, to_address=to,
                 value_native=v, value_usd=round(v * px, 2),
                 fee_usd=round(fee_btc * px, 2), asset="BTC",
-                # inputs[] is what drives common-input-ownership clustering
+                # inputs[] drives common-input-ownership clustering
                 raw={"inputs": inputs, "inputCount": len(inputs),
-                     "outputCount": len(vouts), "confirmed": confirmed},
+                     "outputCount": len(vouts), "confirmed": confirmed,
+                     "transferType": "native"},
             ))
     return edges
 
 
 # =====================================================================
-# Stablecoin valuation
-#
-# A stablecoin transfer IS the money in most crypto fraud — PS 26183 names
-# USDT explicitly. Valuing it 1:1 is right; multiplying an arbitrary
-# altcoin by the native gas-token price would be nonsense, so unknown
-# tokens are recorded unvalued rather than wrongly valued.
+# EVM — Etherscan V2 multichain (Ethereum, Polygon, BSC)
 # =====================================================================
-STABLECOINS = {"USDT", "USDC", "DAI", "BUSD", "TUSD", "USDP", "FDUSD", "PYUSD", "USDE"}
+async def _etherscan_call(
+    chain: str, action: str, address: str, cap: int,
+    http: HttpClient, cfg: Settings,
+) -> list[dict]:
+    if not cfg.etherscan_api_key:
+        raise ProviderError(
+            chain,
+            "ETHERSCAN_API_KEY is not set. Etherscan V2 covers Ethereum, "
+            "Polygon and BSC with one free key — get one at "
+            "https://etherscan.io/apis and set ETHERSCAN_API_KEY.",
+        )
+    chain_id = CHAIN_IDS.get(chain)
+    if chain_id is None:
+        raise ProviderError(chain, "no Etherscan chainid mapped")
+
+    url = (f"{cfg.etherscan_api}?chainid={chain_id}&module=account"
+           f"&action={action}&address={address}&page=1"
+           f"&offset={min(cap, 100)}&sort=desc&apikey={cfg.etherscan_api_key}")
+    j = await http.get_json(url, chain=chain)
+    if not isinstance(j, dict):
+        return []
+
+    # Etherscan signals "no data" as status 0 with a specific message, which
+    # is not an error. Anything else at status 0 is (bad key, rate limit).
+    if j.get("status") == "0":
+        msg = str(j.get("message") or "")
+        result = str(j.get("result") or "")
+        if "No transactions found" in msg or "No transactions found" in result:
+            return []
+        raise ProviderError(chain, result or msg or "unknown Etherscan error")
+
+    rows = j.get("result")
+    return rows if isinstance(rows, list) else []
 
 
-def _token_usd(symbol: str, amount: float) -> tuple[float, bool]:
-    """Returns (usd_value, unvalued_flag)."""
-    s = (symbol or "").upper()
-    if s in STABLECOINS:
-        return round(amount, 2), False
-    return 0.0, True
-
-
-# =====================================================================
-# EVM via Blockscout — Ethereum, Polygon
-#
-# Fetches BOTH native transfers and ERC-20 token transfers.
-#
-# Token transfers are not optional. A native-only tracer is blind to the
-# way this fraud actually moves: an ERC-20 transfer carries `value: 0` in
-# the native transaction, so a wallet that moved a million dollars of USDT
-# and never touched ETH returns an EMPTY GRAPH. That was verified against
-# two real addresses — one of them had zero native transactions and all of
-# its activity in tokens.
-# =====================================================================
-async def blockscout_history(
-    chain: str, address: str, px: float, cap: int, http: HttpClient, cfg: Settings,
-    include_tokens: bool = True,
+async def etherscan_history(
+    chain: str, address: str, px: float, cap: int, http: HttpClient,
+    cfg: Settings, include_tokens: bool = True,
 ) -> list[NormEdge]:
-    base = {"eth": cfg.eth_api, "polygon": cfg.polygon_api}.get(chain)
-    if not base:
-        raise ProviderError(chain, "no Blockscout endpoint configured")
-
-    edges: list[NormEdge] = []
     dec = NATIVE[chain]["decimals"]
+    symbol = NATIVE[chain]["symbol"]
+    edges: list[NormEdge] = []
 
-    # ---- native transfers -------------------------------------------
-    # deliberately no `filter` param — see module docstring
-    j = await http.get_json(f"{base}/addresses/{address}/transactions", chain=chain)
-    for tx in ((j or {}).get("items") or [])[:cap]:
-        frm = ((tx.get("from") or {}).get("hash") or "").lower()
-        to = ((tx.get("to") or {}).get("hash") or "").lower()
+    # ---- native transfers (txlist) ----------------------------------
+    for tx in await _etherscan_call(chain, "txlist", address, cap, http, cfg):
+        frm = (tx.get("from") or "").lower()
+        to = (tx.get("to") or "").lower()
         if not frm or not to:
             continue                                   # contract creation
-        v = float(tx.get("value") or 0) / 10 ** dec    # value arrives as a string
+        v = _safe_float(tx.get("value")) / 10 ** dec
         if v <= 0:
-            continue                # contract call — the token leg is below
-        gas = (float(tx.get("gas_used") or 0) * float(tx.get("gas_price") or 0)) / 10 ** dec
+            continue                    # contract call; token leg is below
+        gas = (_safe_float(tx.get("gasUsed")) * _safe_float(tx.get("gasPrice"))) / 10 ** dec
         edges.append(NormEdge(
             chain=chain, tx_hash=tx.get("hash", ""), vout_index=0,
-            block_height=tx.get("block_number") or tx.get("block"),
-            block_time=tx.get("timestamp") or iso(__import__("time").time()),
+            block_height=_safe_int(tx.get("blockNumber"), 0) or None,
+            block_time=iso(_safe_float(tx.get("timeStamp"))),
             from_address=frm, to_address=to,
             value_native=v, value_usd=round(v * px, 2),
-            fee_usd=round(gas * px, 2), asset=NATIVE[chain]["symbol"],
-            raw={"method": tx.get("method"), "status": tx.get("status"),
-                 "transferType": "native"},
+            fee_usd=round(gas * px, 2), asset=symbol,
+            raw={"transferType": "native",
+                 "isError": tx.get("isError"),
+                 "functionName": tx.get("functionName") or None},
         ))
 
     if not include_tokens:
         return edges
 
-    # ---- ERC-20 token transfers --------------------------------------
+    # ---- ERC-20 token transfers (tokentx) ---------------------------
     try:
-        tj = await http.get_json(
-            f"{base}/addresses/{address}/token-transfers?type=ERC-20", chain=chain)
+        token_rows = await _etherscan_call(chain, "tokentx", address, cap, http, cfg)
     except ProviderError as e:
-        log.warning("token-transfers unavailable for %s: %s", address, e)
+        log.warning("tokentx unavailable for %s on %s: %s", address, chain, e)
         return edges
 
-    for i, t in enumerate(((tj or {}).get("items") or [])[:cap]):
-        frm = ((t.get("from") or {}).get("hash") or "").lower()
-        to = ((t.get("to") or {}).get("hash") or "").lower()
+    for i, t in enumerate(token_rows):
+        frm = (t.get("from") or "").lower()
+        to = (t.get("to") or "").lower()
         if not frm or not to:
             continue
-        token = t.get("token") or {}
-        symbol = token.get("symbol") or "UNKNOWN"
-        try:
-            t_dec = int(token.get("decimals") or 18)
-        except (TypeError, ValueError):
-            t_dec = 18
-        raw_amt = (t.get("total") or {}).get("value") or t.get("value") or 0
-        amount = float(raw_amt) / 10 ** t_dec
+        t_dec = _safe_int(t.get("tokenDecimal"), 18)
+        amount = _safe_float(t.get("value")) / 10 ** t_dec
         if amount <= 0:
             continue
-
-        usd, unvalued = _token_usd(symbol, amount)
+        tok = (t.get("tokenSymbol") or "UNKNOWN").upper()
+        usd, unvalued = _token_usd(tok, amount)
         edges.append(NormEdge(
-            chain=chain, tx_hash=t.get("transaction_hash") or t.get("tx_hash") or "",
-            # token legs share a tx hash with the native call, so the index
-            # keeps the (chain, hash, index, from, to) key unique
+            chain=chain, tx_hash=t.get("hash", ""),
+            # a token leg shares its tx hash with the native call, so the
+            # index keeps (chain, hash, index, from, to) unique
             vout_index=i + 1,
-            block_height=t.get("block_number") or t.get("block"),
-            block_time=t.get("timestamp") or iso(__import__("time").time()),
+            block_height=_safe_int(t.get("blockNumber"), 0) or None,
+            block_time=iso(_safe_float(t.get("timeStamp"))),
             from_address=frm, to_address=to,
-            value_native=amount, value_usd=usd, fee_usd=0.0, asset=symbol,
+            value_native=amount, value_usd=usd, fee_usd=0.0, asset=tok,
             raw={"transferType": "erc20",
-                 "contract": (token.get("address") or "").lower(),
-                 "tokenName": token.get("name"), "decimals": t_dec,
+                 "contract": (t.get("contractAddress") or "").lower(),
+                 "tokenName": t.get("tokenName"), "decimals": t_dec,
                  "unvalued": unvalued},
         ))
-
     return edges
 
 
 # =====================================================================
-# TRON — TronScan
+# TRON — TronGrid
+#
+# Two endpoints, because TronGrid separates them:
+#   /v1/accounts/{a}/transactions        native TRX
+#   /v1/accounts/{a}/transactions/trc20  TRC-20 (this is where USDT lives)
+#
+# USDT-on-Tron is the dominant rail for this fraud in India, so the TRC-20
+# leg matters more here than on any other chain.
 # =====================================================================
+def _tron_headers(cfg: Settings) -> dict[str, str] | None:
+    return {"TRON-PRO-API-KEY": cfg.trongrid_api_key} if cfg.trongrid_api_key else None
+
+
 async def tron_history(
     address: str, px: float, cap: int, http: HttpClient, cfg: Settings,
+    include_tokens: bool = True,
 ) -> list[NormEdge]:
-    url = (f"{cfg.tron_api}/api/transfer?address={address}"
-           f"&limit={min(cap, 50)}&start=0&sort=-timestamp")
-    headers = {"TRON-PRO-API-KEY": cfg.tronscan_api_key} if cfg.tronscan_api_key else None
+    headers = _tron_headers(cfg)
+    limit = min(cap, 200)                              # TronGrid max is 200
+    edges: list[NormEdge] = []
+
+    # ---- TRC-20 transfers -------------------------------------------
+    if include_tokens:
+        url = (f"{cfg.tron_api}/v1/accounts/{address}/transactions/trc20"
+               f"?limit={limit}&only_confirmed=true&order_by=block_timestamp,desc")
+        j = await http.get_json(url, chain="tron", headers=headers)
+        for i, t in enumerate((j or {}).get("data") or []):
+            frm, to = t.get("from"), t.get("to")
+            if not frm or not to:
+                continue
+            if (t.get("type") or "Transfer") != "Transfer":
+                continue                               # Approval, not a movement
+            info = t.get("token_info") or {}
+            t_dec = _safe_int(info.get("decimals"), 6)
+            amount = _safe_float(t.get("value")) / 10 ** t_dec
+            if amount <= 0:
+                continue
+            tok = (info.get("symbol") or "UNKNOWN").upper()
+            usd, unvalued = _token_usd(tok, amount)
+            edges.append(NormEdge(
+                chain="tron", tx_hash=t.get("transaction_id", ""),
+                vout_index=i + 1, block_height=None,
+                # TronGrid timestamps are milliseconds
+                block_time=iso(_safe_float(t.get("block_timestamp")) / 1000.0),
+                from_address=frm, to_address=to,
+                value_native=amount, value_usd=usd, fee_usd=0.0, asset=tok,
+                raw={"transferType": "trc20",
+                     "contract": info.get("address"),
+                     "tokenName": info.get("name"), "decimals": t_dec,
+                     "unvalued": unvalued},
+            ))
+
+    # ---- native TRX --------------------------------------------------
+    url = (f"{cfg.tron_api}/v1/accounts/{address}/transactions"
+           f"?limit={limit}&only_confirmed=true&order_by=block_timestamp,desc")
     j = await http.get_json(url, chain="tron", headers=headers)
 
-    edges: list[NormEdge] = []
-    for t in ((j or {}).get("data") or [])[:cap]:
-        frm, to = t.get("transferFromAddress"), t.get("transferToAddress")
-        if not frm or not to:
-            continue
-        info = t.get("tokenInfo") or {}
-        decimals = int(info.get("tokenDecimal") or 6)
-        v = float(t.get("amount") or 0) / 10 ** decimals
-        if v <= 0:
+    for tx in (j or {}).get("data") or []:
+        try:
+            contract = (tx.get("raw_data") or {}).get("contract") or []
+            if not contract:
+                continue
+            c0 = contract[0]
+            if c0.get("type") != "TransferContract":
+                continue                               # not a TRX movement
+            val = ((c0.get("parameter") or {}).get("value") or {})
+            frm = val.get("owner_address")
+            to = val.get("to_address")
+            amount = _safe_float(val.get("amount")) / 1e6   # TRX has 6 decimals
+            if not frm or not to or amount <= 0:
+                continue
+            # TronGrid returns hex addresses here (41-prefixed), while the
+            # TRC-20 endpoint returns base58. Mixing the two would split one
+            # wallet into two graph nodes, so hex is converted.
+            frm_b58 = _hex_to_base58(frm)
+            to_b58 = _hex_to_base58(to)
+            edges.append(NormEdge(
+                chain="tron", tx_hash=tx.get("txID", ""), vout_index=0,
+                block_height=(tx.get("blockNumber") or None),
+                block_time=iso(_safe_float(tx.get("block_timestamp")) / 1000.0),
+                from_address=frm_b58, to_address=to_b58,
+                value_native=amount, value_usd=round(amount * px, 2),
+                fee_usd=round(_safe_float((tx.get("ret") or [{}])[0].get("fee")) / 1e6 * px, 2),
+                asset="TRX",
+                raw={"transferType": "native",
+                     "result": (tx.get("ret") or [{}])[0].get("contractRet")},
+            ))
+        except (KeyError, IndexError, TypeError) as e:
+            log.debug("skipping malformed tron tx: %s", e)
             continue
 
-        symbol = (info.get("tokenAbbr") or "TRX").upper()
-        if symbol == "TRX":
-            usd = round(v * px, 2)
-        elif "USD" in symbol:
-            usd = round(v, 2)          # a dollar stablecoin is already USD
-        else:
-            # Multiplying an arbitrary TRC20 by the TRX price would be
-            # nonsense, so it is left unvalued rather than wrong.
-            usd = 0.0
-
-        edges.append(NormEdge(
-            chain="tron", tx_hash=t.get("transactionHash") or t.get("hash") or "",
-            vout_index=0, block_height=t.get("block"),
-            block_time=iso(float(t.get("timestamp", 0)) / 1000.0),
-            from_address=frm, to_address=to,
-            value_native=v, value_usd=usd, fee_usd=0.0, asset=symbol,
-            raw={"confirmed": t.get("confirmed"), "contractRet": t.get("contractRet"),
-                 "tokenName": info.get("tokenName"),
-                 "unvalued": usd == 0.0 and symbol != "TRX"},
-        ))
     return edges
 
 
-# =====================================================================
-# BSC — Etherscan V2 multichain (free key)
-# =====================================================================
-async def bsc_history(
-    address: str, px: float, cap: int, http: HttpClient, cfg: Settings,
-) -> list[NormEdge]:
-    if not cfg.etherscan_api_key:
-        raise ProviderError(
-            "bsc",
-            "BSC requires ETHERSCAN_API_KEY. Every keyless BSC explorer has "
-            "closed (bnb/bsc.blockscout.com 404, Routescan rejects chain 56). "
-            "One free key at etherscan.io covers BSC and all other EVM chains.",
-        )
-    url = (f"https://api.etherscan.io/v2/api?chainid=56&module=account&action=txlist"
-           f"&address={address}&page=1&offset={min(cap, 100)}&sort=desc"
-           f"&apikey={cfg.etherscan_api_key}")
-    j = await http.get_json(url, chain="bsc")
-    if isinstance(j, dict) and j.get("status") == "0" \
-            and j.get("message") != "No transactions found":
-        raise ProviderError("bsc", str(j.get("result") or j.get("message")))
+# ---------------------------------------------------------------------
+# Tron address conversion: 41-hex -> base58check
+#
+# Implemented here rather than pulled in as a dependency: it is ~20 lines
+# and the alternative (base58 + a Tron SDK) is a lot of surface area for
+# one conversion.
+# ---------------------------------------------------------------------
+_B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
-    rows = (j or {}).get("result") or []
-    if not isinstance(rows, list):
-        return []
 
-    edges: list[NormEdge] = []
-    for tx in rows:
-        frm, to = (tx.get("from") or "").lower(), (tx.get("to") or "").lower()
-        if not frm or not to:
-            continue
-        v = float(tx.get("value") or 0) / 1e18
-        if v <= 0:
-            continue
-        gas = (float(tx.get("gasUsed") or 0) * float(tx.get("gasPrice") or 0)) / 1e18
-        edges.append(NormEdge(
-            chain="bsc", tx_hash=tx.get("hash", ""), vout_index=0,
-            block_height=int(tx["blockNumber"]) if tx.get("blockNumber") else None,
-            block_time=iso(float(tx.get("timeStamp", 0))),
-            from_address=frm, to_address=to,
-            value_native=v, value_usd=round(v * px, 2),
-            fee_usd=round(gas * px, 2), asset="BNB",
-            raw={"isError": tx.get("isError"), "functionName": tx.get("functionName")},
-        ))
-    return edges
+def _hex_to_base58(hex_addr: str) -> str:
+    """Convert a 41-prefixed hex Tron address to base58check. Idempotent."""
+    if not hex_addr:
+        return hex_addr
+    # already base58
+    if hex_addr.startswith("T") and len(hex_addr) == 34:
+        return hex_addr
+    try:
+        import hashlib
+        raw = bytes.fromhex(hex_addr)
+        if len(raw) != 21 or raw[0] != 0x41:
+            return hex_addr
+        checksum = hashlib.sha256(hashlib.sha256(raw).digest()).digest()[:4]
+        payload = raw + checksum
+        num = int.from_bytes(payload, "big")
+        out = ""
+        while num > 0:
+            num, rem = divmod(num, 58)
+            out = _B58[rem] + out
+        # leading zero bytes become '1'
+        for b in payload:
+            if b == 0:
+                out = "1" + out
+            else:
+                break
+        return out
+    except Exception:                                  # noqa: BLE001
+        return hex_addr
 
 
 # =====================================================================
@@ -291,11 +401,8 @@ async def address_history(
     """Single dispatch point. Callers never branch on chain."""
     if chain == "btc":
         return await btc_history(address, px, cap, http, cfg, include_unconfirmed)
-    if chain in ("eth", "polygon"):
-        return await blockscout_history(chain, address, px, cap, http, cfg,
-                                        include_tokens)
+    if chain in CHAIN_IDS:
+        return await etherscan_history(chain, address, px, cap, http, cfg, include_tokens)
     if chain == "tron":
-        return await tron_history(address, px, cap, http, cfg)
-    if chain == "bsc":
-        return await bsc_history(address, px, cap, http, cfg)
+        return await tron_history(address, px, cap, http, cfg, include_tokens)
     raise ProviderError(chain, "unsupported chain")
