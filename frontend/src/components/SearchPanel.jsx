@@ -39,6 +39,7 @@ export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
   const [address, setAddress] = useState("TX7sK...victim");
   const [chain, setChain] = useState("Tron (TRC-20)");
   const [firNo, setFirNo] = useState("SIH/2026/00412");
+  const [hops, setHops] = useState(2);
   const [autoDetectedChain, setAutoDetectedChain] = useState("Tron (TRC-20)");
 
   // Real-time auto-detection when address changes
@@ -58,6 +59,13 @@ export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
       setAutoDetectedChain(detected);
     }
   }, []);
+
+  const HOP_OPTIONS = [
+    { value: 0, label: "0 Hops (Ingested Wallet Only)", desc: "Strictly fetch direct transactions" },
+    { value: 1, label: "1 Hop (Direct Counterparties)", desc: "Include immediate senders/receivers" },
+    { value: 2, label: "2 Hops (Default)", desc: "Expand to 2nd-degree sub-network" },
+    { value: 3, label: "3 Hops (Deep Trace)", desc: "Full multi-hop graph expansion" },
+  ];
 
   return (
     <div className="glass-panel rounded-2xl p-5 border border-white/10 shadow-2xl relative overflow-hidden">
@@ -139,6 +147,38 @@ export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
         />
       </div>
 
+      {/* Trace Depth (Hops) Selection */}
+      <div className="mt-4">
+        <div className="flex items-center justify-between mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-400">
+          <span>Trace Depth (Hops)</span>
+          <span className="text-[10px] text-[#d8b84d]">
+            {hops === 0 ? "Target wallet transactions only" : `${hops} hop traversal active`}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {HOP_OPTIONS.map((opt) => (
+            <button
+              type="button"
+              key={opt.value}
+              onClick={() => setHops(opt.value)}
+              className={`rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer border ${
+                hops === opt.value
+                  ? "bg-[#E5B83B]/20 border-[#E5B83B] text-[#B45309] dark:text-[#FFE28A] font-bold shadow-[0_0_12px_rgba(229,184,59,0.25)]"
+                  : "bg-slate-100/80 dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-white/10"
+              }`}
+            >
+              <div className="text-xs font-semibold flex items-center justify-between">
+                <span>{opt.value} {opt.value === 1 ? "Hop" : "Hops"}</span>
+                {hops === opt.value && <CheckCircle2 size={12} className="text-[#B45309] dark:text-[#FFE28A]" />}
+              </div>
+              <div className="text-[9px] text-slate-400 leading-tight mt-0.5 truncate" title={opt.desc}>
+                {opt.desc}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* FIR / Case No Input */}
       <div className="mt-4">
         <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">FIR / NCRP complaint reference</label>
@@ -156,7 +196,7 @@ export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
       {/* Start Trace Action Button (Rolex Luxury Gold Gradient) */}
       <button
         type="button"
-        onClick={() => onTrace(address, chain, firNo)}
+        onClick={() => onTrace(address, chain, firNo, hops)}
         disabled={loading || !address}
         className="rolex-gold-btn mt-5 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3.5 text-sm font-extrabold tracking-wide transition disabled:opacity-50 cursor-pointer"
       >
@@ -168,7 +208,7 @@ export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
         <span className="text-[#150F00] font-mono">
           {loading 
             ? `Traversing live blockchain (${elapsedTime.toFixed(2)}s)...` 
-            : "Start autonomous trace"}
+            : `Start autonomous trace (${hops} ${hops === 1 ? "hop" : "hops"})`}
         </span>
       </button>
 

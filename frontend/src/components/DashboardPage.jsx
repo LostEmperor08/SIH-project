@@ -74,7 +74,7 @@ export default function DashboardPage() {
 
   const attribution = graph?.attribution;
 
-  async function runTrace(address, chain, fir) {
+  async function runTrace(address, chain, fir, hops = 2) {
     setLoading(true);
     setError(null);
     setFirNo(fir);
@@ -87,7 +87,7 @@ export default function DashboardPage() {
     }, 50);
 
     try {
-      const data = await traceFunds({ address, chain, complaintDate: fir });
+      const data = await traceFunds({ address, chain, complaintDate: fir, hops });
       setGraph(data);
 
       // Seal the traced hops into the hash-chained evidence ledger.
