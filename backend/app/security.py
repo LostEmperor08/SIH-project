@@ -124,36 +124,69 @@ async def _verify_supabase_token(token: str, cfg: Settings) -> Officer:
         if not user_id:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "token carries no subject")
 
-        # role comes from the DB, never from the token's own claims —
-        # a client-supplied role claim is an escalation waiting to happen
+        # Role comes from the DB, never from the token's own claims —
+        # a client-supplied role claim is an escalation waiting to happen.
+        #
+        # `profiles` is the source of truth (migration 08 consolidated identity
+        # there because it carries badge_id and station_code, which an LEA
+        # system needs). `user_roles` is checked only as a fallback for a
+        # database where 08 has not run yet.
+        db_headers = {
+            "apikey": cfg.supabase_service_role_key or cfg.supabase_anon_key,
+            "Authorization": f"Bearer {cfg.supabase_service_role_key or token}",
+        }
+
         role: Role = "viewer"
         active = False
-        try:
-            r = await client.get(
-                f"{cfg.supabase_url}/rest/v1/user_roles",
-                params={"user_id": f"eq.{user_id}", "select": "role"},
-                headers={
-                    "apikey": cfg.supabase_service_role_key or cfg.supabase_anon_key,
-                    "Authorization":
-                        f"Bearer {cfg.supabase_service_role_key or token}",
-                },
-            )
-            if r.status_code == 200 and r.json():
-                role = r.json()[0].get("role", "viewer")
+        found_row = False
+        why = ""
+
+        async def _lookup(table: str, id_col: str, select: str):
+            try:
+                r = await client.get(
+                    f"{cfg.supabase_url}/rest/v1/{table}",
+                    params={id_col: f"eq.{user_id}", "select": select},
+                    headers=db_headers,
+                )
+            except httpx.HTTPError as e:
+                log.error("role lookup on %s failed for %s: %s", table, user_id, e)
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE, "role service unavailable")
+            if r.status_code != 200:
+                log.warning("role lookup on %s -> %s %s",
+                            table, r.status_code, r.text[:160])
+                return None
+            rows = r.json()
+            return rows[0] if rows else None
+
+        row = await _lookup("profiles", "id", "role,status")
+        if row:
+            found_row = True
+            role = row.get("role") or "viewer"
+            # 'status' gates access: a suspended officer keeps their account
+            # (the audit trail references it) but loses every permission.
+            st = row.get("status")
+            active = st == "active"
+            if not active:
+                why = f"officer account status is '{st}', not 'active'"
+        else:
+            row = await _lookup("user_roles", "user_id", "role")
+            if row:
+                found_row = True
+                role = row.get("role") or "viewer"
                 active = True
-        except httpx.HTTPError as e:
-            log.error("role lookup failed for %s: %s", user_id, e)
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE, "role service unavailable"
-            )
 
         # Control 7: an authenticated user with no officer record is not an
         # officer. Authentication is not authorisation.
         if not active:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                "no active officer record for this account",
-            )
+            if not found_row:
+                why = ("no officer record exists for this account. Create one:\n"
+                       "  insert into public.profiles (id, email, role, status)\n"
+                       "  select id, email, 'admin', 'active' from auth.users\n"
+                       "   where email = '<your email>'\n"
+                       "  on conflict (id) do update set role='admin', status='active';")
+            log.warning("403 for user %s: %s", user_id, why)
+            raise HTTPException(status.HTTP_403_FORBIDDEN, why)
 
         officer = Officer(id=user_id, email=user.get("email"), role=role)
         _token_cache.put(token, officer)
@@ -253,7 +286,9 @@ def require_role(minimum: Role):
         if officer.rank < _RANK[minimum]:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
-                f"role '{minimum}' or higher required (you are '{officer.role}')",
+                f"role '{minimum}' or higher required — this account is "
+                f"'{officer.role}'. Promote it:  update public.profiles set "
+                f"role='{minimum}', status='active' where email='{officer.email}';",
             )
         return officer
     return _dep
