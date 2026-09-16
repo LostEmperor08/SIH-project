@@ -1,4 +1,5 @@
 import { isSupabaseConfigured, supabase } from "./supabase.js";
+import { normalizeBackendTrace, toChainCode } from "./apiAdapter.js";
 
 // Set VITE_API_URL=http://localhost:8000 in .env to connect your FastAPI backend.
 const API = import.meta.env.VITE_API_URL;
@@ -76,14 +77,51 @@ async function authHeaders() {
 
 export async function traceFunds(req) {
   if (API) {
+    const chain = toChainCode(req.chain);
+    if (!chain) {
+      throw new Error(`Unsupported chain: "${req.chain}". Supported: Bitcoin, Ethereum, Polygon, Tron, BSC.`);
+    }
+
     const headers = await authHeaders();
+    if (!headers.Authorization) {
+      throw new Error("Not signed in. Log in before running a trace.");
+    }
+
+    // The backend contract is {targets:[{chain,address}], hops}. The UI
+    // speaks {address, chain}; translating here keeps both unchanged.
     const res = await fetch(`${API}/trace`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
-      body: JSON.stringify(req),
+      body: JSON.stringify({
+        targets: [{ chain, address: String(req.address ?? "").trim() }],
+        hops: req.hops ?? 2,
+        cap_per_address: req.cap ?? 50,
+        score: true,
+        persist: true,
+      }),
     });
-    if (!res.ok) throw new Error(`Trace failed: ${res.status}`);
-    return res.json();
+
+    if (!res.ok) {
+      // Surface the real reason instead of a bare status code — a 422 that
+      // says "not a valid polygon address" is actionable; "Trace failed:
+      // 422" costs an hour.
+      let detail = "";
+      try {
+        const body = await res.json();
+        if (res.status === 422 && Array.isArray(body.detail)) {
+          detail = body.detail.map((d) => `${d.field}: ${d.message}`).join("; ");
+        } else if (res.status === 404 && body.detail?.error) {
+          detail = `${body.detail.error}. ${body.detail.hint ?? ""}`;
+        } else {
+          detail = body.detail ?? body.error ?? JSON.stringify(body).slice(0, 200);
+        }
+      } catch {
+        detail = await res.text().catch(() => "");
+      }
+      throw new Error(`Trace failed (${res.status})${detail ? ": " + detail : ""}`);
+    }
+
+    return normalizeBackendTrace(await res.json());
   }
 
   if (isSupabaseConfigured) {
