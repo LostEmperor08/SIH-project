@@ -35,7 +35,7 @@ function detectChainFromAddress(addr) {
   return null;
 }
 
-export default function SearchPanel({ onTrace, loading }) {
+export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
   const [address, setAddress] = useState("TX7sK...victim");
   const [chain, setChain] = useState("Tron (TRC-20)");
   const [firNo, setFirNo] = useState("SIH/2026/00412");
@@ -70,8 +70,13 @@ export default function SearchPanel({ onTrace, loading }) {
           <h2 className="text-lg font-bold text-slate-100">Ingest suspect wallet</h2>
         </div>
         <div className="flex items-center gap-2">
-          {autoDetectedChain && (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-[#d8b84d]/40 bg-[#d8b84d]/10 px-2.5 py-1 text-[10px] font-bold text-[#d8b84d] animate-pulse">
+          {loading && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/50 bg-amber-950/80 px-2.5 py-1 text-[11px] font-mono font-bold text-amber-300 animate-pulse">
+              <Zap size={12} className="text-amber-400" /> {elapsedTime.toFixed(2)}s
+            </span>
+          )}
+          {autoDetectedChain && !loading && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-[#d8b84d]/40 bg-[#d8b84d]/10 px-2.5 py-1 text-[10px] font-bold text-[#d8b84d]">
               <Zap size={11} /> Auto-detected: {autoDetectedChain}
             </span>
           )}
@@ -155,8 +160,16 @@ export default function SearchPanel({ onTrace, loading }) {
         disabled={loading || !address}
         className="rolex-gold-btn mt-5 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3.5 text-sm font-extrabold tracking-wide transition disabled:opacity-50 cursor-pointer"
       >
-        {loading ? <Loader2 className="h-4 w-4 animate-spin text-[#150F00]" /> : <Search className="h-4 w-4 text-[#150F00]" strokeWidth={2.5} />}
-        <span className="text-[#150F00]">{loading ? "Traversing multi-chain graph..." : "Start autonomous trace"}</span>
+        {loading ? (
+          <Loader2 className="h-4 w-4 animate-spin text-[#150F00]" />
+        ) : (
+          <Search className="h-4 w-4 text-[#150F00]" strokeWidth={2.5} />
+        )}
+        <span className="text-[#150F00] font-mono">
+          {loading 
+            ? `Traversing live blockchain (${elapsedTime.toFixed(2)}s)...` 
+            : "Start autonomous trace"}
+        </span>
       </button>
 
       {/* Footer Info */}

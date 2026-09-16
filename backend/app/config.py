@@ -60,8 +60,8 @@ class Settings(BaseSettings):
     # per hop over 2 hops is ~160 calls. Etherscan's free tier allows 5/sec,
     # so that trace could not finish in under ~30s and would hit limits
     # mid-run — which is why the node count kept changing between runs.
-    max_addresses_per_hop: int = 12
-    max_total_edges: int = 8_000
+    max_addresses_per_hop: int = 3
+    max_total_edges: int = 1_000
     max_targets_per_request: int = 10
     default_cap_per_address: int = 25
     # Etherscan free tier is 5 requests/second. 6 concurrent guarantees 429s.

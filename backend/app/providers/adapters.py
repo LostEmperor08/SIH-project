@@ -20,6 +20,7 @@ real address with zero native transactions and all activity in ERC-20.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -173,21 +174,28 @@ async def _etherscan_call(
     url = (f"{cfg.etherscan_api}?chainid={chain_id}&module=account"
            f"&action={action}&address={address}&page=1"
            f"&offset={min(cap, 100)}&sort=desc&apikey={cfg.etherscan_api_key}")
-    j = await http.get_json(url, chain=chain)
-    if not isinstance(j, dict):
-        return []
-
-    # Etherscan signals "no data" as status 0 with a specific message, which
-    # is not an error. Anything else at status 0 is (bad key, rate limit).
-    if j.get("status") == "0":
-        msg = str(j.get("message") or "")
-        result = str(j.get("result") or "")
-        if "No transactions found" in msg or "No transactions found" in result:
+    for attempt in range(4):
+        j = await http.get_json(url, chain=chain)
+        if not isinstance(j, dict):
             return []
-        raise ProviderError(chain, result or msg or "unknown Etherscan error")
 
-    rows = j.get("result")
-    return rows if isinstance(rows, list) else []
+        # Etherscan signals "no data" as status 0 with a specific message, which
+        # is not an error. Anything else at status 0 is (bad key, rate limit).
+        if j.get("status") == "0":
+            msg = str(j.get("message") or "")
+            result = str(j.get("result") or "")
+            if "No transactions found" in msg or "No transactions found" in result:
+                return []
+            err_text = f"{result} {msg}".lower()
+            if "rate limit" in err_text or "max calls" in err_text or "limit reached" in err_text:
+                if attempt < 3:
+                    await asyncio.sleep(0.45 * (attempt + 1))
+                    continue
+            raise ProviderError(chain, result or msg or "unknown Etherscan error")
+
+        rows = j.get("result")
+        return rows if isinstance(rows, list) else []
+    return []
 
 
 async def etherscan_history(

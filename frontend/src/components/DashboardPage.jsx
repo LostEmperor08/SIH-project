@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ArrowRight, BookOpen, Clock3, Download, FileSpreadsheet, 
@@ -18,7 +18,7 @@ import { sealTraceEvidence, caseRefFor } from "../lib/evidence.js";
 
 const emptyMetrics = [
   ["Traced volume", "--", "₹0 INR"],
-  ["Attribution velocity", "0 Records", "Live RPC"],
+  ["Attribution velocity", "0.00s", "Live RPC"],
   ["Identified VASP", "-", "Deposit endpoint"],
   ["FIU-IND status", "Standby", "PMLA jurisdiction"],
   ["Preservation SLA", "< 4 Hours", "Sec 91 window"],
@@ -69,6 +69,8 @@ export default function DashboardPage() {
   const [error, setError] = useState(null);
   const [firNo, setFirNo] = useState("SIH/2026/00412");
   const [selectedEntity, setSelectedEntity] = useState(null);
+  const [elapsedTime, setElapsedTime] = useState(0.0);
+  const timerRef = useRef(null);
 
   const attribution = graph?.attribution;
 
@@ -76,6 +78,14 @@ export default function DashboardPage() {
     setLoading(true);
     setError(null);
     setFirNo(fir);
+    setElapsedTime(0.0);
+
+    const t0 = performance.now();
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      setElapsedTime((performance.now() - t0) / 1000);
+    }, 50);
+
     try {
       const data = await traceFunds({ address, chain, complaintDate: fir });
       setGraph(data);
@@ -98,6 +108,11 @@ export default function DashboardPage() {
     } catch (traceError) {
       setError(traceError.message ?? "Trace failed");
     } finally {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      setElapsedTime((performance.now() - t0) / 1000);
       setLoading(false);
     }
   }
@@ -113,12 +128,18 @@ export default function DashboardPage() {
   const metrics = attribution
     ? [
         ["Traced volume", `${attribution.hops} hops`, `${attribution.exchange_name} route`],
-        ["Attribution velocity", `${(attribution.time_to_attribution_ms / 1000).toFixed(1)}s`, "Direct on-chain RPC"],
+        ["Attribution velocity", `${elapsedTime > 0 ? elapsedTime.toFixed(2) : (attribution.time_to_attribution_ms / 1000).toFixed(2)}s`, "Direct on-chain RPC"],
         ["Identified VASP", attribution.exchange_name, "Deposit endpoint"],
         ["FIU-IND status", `${(attribution.confidence * 100).toFixed(0)}%`, "PMLA jurisdiction"],
         ["Preservation SLA", "< 4 Hours", "Sec 91 window"],
       ]
-    : emptyMetrics;
+    : [
+        ["Traced volume", "--", "₹0 INR"],
+        ["Attribution velocity", `${elapsedTime > 0 ? elapsedTime.toFixed(2) : "0.00"}s`, "Live RPC"],
+        ["Identified VASP", "-", "Deposit endpoint"],
+        ["FIU-IND status", "Standby", "PMLA jurisdiction"],
+        ["Preservation SLA", "< 4 Hours", "Sec 91 window"],
+      ];
 
   const handleNav = (route) => {
     if (route === "landing") {
@@ -164,10 +185,12 @@ export default function DashboardPage() {
                   <Clock3 size={19} className="text-[#E5B83B]" />
                   <div>
                     <div className="eyebrow text-[#E5B83B]">Real-time attribution latency</div>
-                    <div className="mt-1 text-2xl font-bold text-white">
-                      {attribution ? `${(attribution.time_to_attribution_ms / 1000).toFixed(2)}s` : "0.00s"}{" "}
-                      <span className="text-xs font-normal text-slate-400">
-                        {loading ? "Scanning" : "Standby"}
+                    <div className="mt-1 text-2xl font-bold text-white font-mono">
+                      {elapsedTime > 0
+                        ? `${elapsedTime.toFixed(2)}s`
+                        : (attribution ? `${(attribution.time_to_attribution_ms / 1000).toFixed(2)}s` : "0.00s")}{" "}
+                      <span className="text-xs font-normal text-slate-400 font-sans">
+                        {loading ? "Scanning Live..." : (graph ? "Attributed" : "Standby")}
                       </span>
                     </div>
                     <div className="mt-2 text-[11px] text-slate-400">Direct on-chain node execution</div>
@@ -177,7 +200,7 @@ export default function DashboardPage() {
 
               {/* Ingestion & Auto-detection Search Panel */}
               <motion.div variants={cardItemVariants}>
-                <SearchPanel onTrace={runTrace} loading={loading} />
+                <SearchPanel onTrace={runTrace} loading={loading} elapsedTime={elapsedTime} />
               </motion.div>
               {error && <div className="glass-panel rounded-xl p-3 text-sm text-red-300 border border-red-500/30">{error}</div>}
               {/* Sealing runs behind the graph; without this banner a failed
@@ -236,7 +259,9 @@ export default function DashboardPage() {
                         <BookOpen size={16} className="text-[#E5B83B]" /> Cryptographic evidence ledger
                       </h2>
                       <span className="rounded-full bg-[#E5B83B]/15 px-2.5 py-0.5 text-[10px] font-bold text-[#FFE28A] border border-[#E5B83B]/30">
-                        49 On-Chain Records
+                        {graph?.transactions?.length 
+                          ? `${graph.transactions.length} On-Chain Records` 
+                          : (graph?.edges?.length ? `${graph.edges.length} Traversed Edges` : "Verified Audit Records")}
                       </span>
                     </div>
                     <p className="text-xs text-slate-400 mt-1">
@@ -278,31 +303,41 @@ export default function DashboardPage() {
 
                 {/* Quick Ledger Preview Strip */}
                 <div className="rounded-xl border border-slate-200/80 dark:border-white/5 bg-slate-100/80 dark:bg-black/30 p-4 shadow-sm">
-                  {graph?.edges?.length > 0 ? (
+                  {((graph?.transactions && graph.transactions.length) ? graph.transactions : (graph?.edges || [])).length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-                      {graph.edges.slice(0, 3).map((edge, idx) => (
-                        <div
-                          key={edge.tx_hash || idx}
-                          onClick={() => setSelectedEntity(edge)}
-                          className="rounded-xl border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-white/[0.03] p-3 hover:bg-white dark:hover:bg-white/[0.07] hover:border-[#E5B83B]/50 cursor-pointer transition flex flex-col justify-between shadow-sm"
-                        >
-                          <div className="flex items-center justify-between text-[11px] mb-1.5">
-                            <span className="font-bold text-slate-800 dark:text-slate-300">Hop #{idx + 1}</span>
-                            <span className="text-[10px] text-slate-500 font-mono">{edge.timestamp ? new Date(edge.timestamp).toLocaleTimeString() : "Live"}</span>
+                      {((graph?.transactions && graph.transactions.length) ? graph.transactions : graph.edges).slice(0, 3).map((tx, idx) => {
+                        const from = tx.from_address || tx.from || tx.source || "";
+                        const to = tx.to_address || tx.to || tx.target || "";
+                        const val = Number(tx.value_native != null && tx.value_native > 0 ? tx.value_native : (tx.value_usd || tx.amount || 0));
+                        const asset = tx.asset || (tx.token && tx.token !== "USD" ? tx.token : "USDT0");
+                        const when = tx.block_time || tx.timestamp || tx.lastSeen || null;
+
+                        return (
+                          <div
+                            key={tx.tx_hash || tx.txHash || idx}
+                            onClick={() => setSelectedEntity(tx)}
+                            className="rounded-xl border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-white/[0.03] p-3 hover:bg-white dark:hover:bg-white/[0.07] hover:border-[#E5B83B]/50 cursor-pointer transition flex flex-col justify-between shadow-sm"
+                          >
+                            <div className="flex items-center justify-between text-[11px] mb-1.5">
+                              <span className="font-bold text-slate-800 dark:text-slate-300">Hop #{idx + 1}</span>
+                              <span className="text-[10px] text-slate-500 font-mono">
+                                {when ? new Date(when).toLocaleTimeString() : "Live"}
+                              </span>
+                            </div>
+                            <div className="text-xs font-mono text-slate-700 dark:text-slate-200 truncate">
+                              {(from || "").slice(0, 8)}... → {(to || "").slice(0, 8)}...
+                            </div>
+                            <div className="mt-2 flex items-center justify-between">
+                              <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 font-mono">
+                                {val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} {asset}
+                              </span>
+                              <span className="text-[9px] font-bold px-2 py-0.5 rounded border text-[#d8b84d] border-[#d8b84d]/30 bg-[#d8b84d]/10">
+                                VERIFIED
+                              </span>
+                            </div>
                           </div>
-                          <div className="text-xs font-mono text-slate-700 dark:text-slate-200 truncate">
-                            {(edge.source || "").slice(0, 8)}... → {(edge.target || "").slice(0, 8)}...
-                          </div>
-                          <div className="mt-2 flex items-center justify-between">
-                            <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                              {Number(edge.amount || 0).toLocaleString()} {edge.token || "USDT"}
-                            </span>
-                            <span className="text-[9px] font-bold px-2 py-0.5 rounded border text-[#d8b84d] border-[#d8b84d]/30 bg-[#d8b84d]/10">
-                              VERIFIED
-                            </span>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : null}
                   <div className="flex flex-col sm:flex-row items-center justify-between text-xs text-slate-400 gap-2">
@@ -332,7 +367,13 @@ export default function DashboardPage() {
               animate="animate"
               exit="exit"
             >
-              <EvidenceLedgerPage onNavigate={handleNav} />
+              <EvidenceLedgerPage
+                onNavigate={handleNav}
+                graph={graph}
+                activeCaseRef={caseRef}
+                activeFir={firNo}
+                suspectAddress={graph?.nodes?.find(n => n.type === "SUSPECT")?.id}
+              />
             </motion.div>
           )}
 

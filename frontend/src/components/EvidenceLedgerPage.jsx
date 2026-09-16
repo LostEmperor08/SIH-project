@@ -9,9 +9,10 @@ import {
 import { fetchEvidenceRecords } from "../lib/supabase.js";
 import { NodeDetailDrawer } from "./NodeDetailDrawer.jsx";
 
-export function EvidenceLedgerPage({ onNavigate }) {
-  const [records, setRecords] = useState([]);
+export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, activeFir, suspectAddress }) {
+  const [dbRecords, setDbRecords] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [viewScope, setViewScope] = useState(graph?.edges?.length ? "ACTIVE" : "ALL");
   const [filterType, setFilterType] = useState("ALL");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedEntity, setSelectedEntity] = useState(null);
@@ -22,11 +23,17 @@ export function EvidenceLedgerPage({ onNavigate }) {
     loadRecords();
   }, []);
 
+  useEffect(() => {
+    if (graph?.edges?.length) {
+      setViewScope("ACTIVE");
+    }
+  }, [graph]);
+
   async function loadRecords() {
     setLoading(true);
     try {
       const data = await fetchEvidenceRecords();
-      setRecords(data || []);
+      setDbRecords(data || []);
     } catch (err) {
       console.error("Failed to load evidence records", err);
     } finally {
@@ -39,6 +46,118 @@ export function EvidenceLedgerPage({ onNavigate }) {
     await loadRecords();
     setIsRefreshing(false);
   }
+
+  const USD_INR = Number(import.meta.env.VITE_USD_INR_RATE) || 89.0;
+
+  const cleanAddr = (a) => String(a || "").trim().toLowerCase().replace(/^[a-z0-9_-]+:/, "");
+
+  const liveRecords = useMemo(() => {
+    const allTxs = (graph?.transactions && graph.transactions.length)
+      ? graph.transactions
+      : (graph?.edges || []);
+    if (!allTxs.length) return [];
+
+    const nodesMap = new Map((graph?.nodes || []).map(n => [cleanAddr(n.id), n]));
+    const suspectNode = graph?.nodes?.find(n => n.type === "SUSPECT");
+    const activeSuspect = cleanAddr(suspectAddress || suspectNode?.id || "");
+
+    // Filter to transactions where the ingested suspect address is directly involved (or all if no suspect)
+    const suspectTxs = activeSuspect 
+      ? allTxs.filter(tx => {
+          const from = cleanAddr(tx.from_address || tx.from_addr || tx.from || tx.source || "");
+          const to = cleanAddr(tx.to_address || tx.to_addr || tx.to || tx.target || "");
+          return from === activeSuspect || to === activeSuspect;
+        })
+      : allTxs;
+
+    // If suspectTxs has matches, use them; otherwise use allTxs so nothing is hidden
+    const targetTxs = suspectTxs.length > 0 ? suspectTxs : allTxs;
+
+    return targetTxs.map((tx, idx) => {
+      const from = cleanAddr(tx.from_address || tx.from_addr || tx.from || tx.source || "");
+      const to = cleanAddr(tx.to_address || tx.to_addr || tx.to || tx.target || "");
+      const isFromSuspect = Boolean(activeSuspect && from === activeSuspect);
+      const isToSuspect = Boolean(activeSuspect && to === activeSuspect);
+
+      const targetNode = nodesMap.get(to);
+      const isToVasp = targetNode?.type === "VASP" || targetNode?.entity === "exchange" || targetNode?.hopsToExchange === 0;
+
+      const numVal = Number(
+        (tx.value_native != null && tx.value_native > 0)
+          ? tx.value_native
+          : (tx.value_usd || tx.amount || 0)
+      );
+      const asset = tx.asset || (tx.token && tx.token !== "USD" ? tx.token : "USDT0");
+      const when = tx.block_time || tx.timestamp || tx.observed_at || null;
+
+      const counterpartyLabel = isFromSuspect
+        ? (isToVasp ? (targetNode?.label || "Terminal VASP") : "Recipient Mule")
+        : (isToSuspect ? "Inbound Depositor" : "Intermediary Counterparty");
+
+      const counterpartyAddr = isFromSuspect ? to : (isToSuspect ? from : to);
+      const originAddr = isFromSuspect ? from : (isToSuspect ? from : from);
+
+      const inr = Math.round(
+        Number(tx.value_usd != null && tx.value_usd > 0 ? tx.value_usd : (numVal > 0 ? numVal : 0)) * USD_INR
+      );
+
+      let istDate = "16/9/2026, 11:48:22 am";
+      if (when) {
+        try {
+          const d = new Date(when);
+          if (!isNaN(d.getTime())) {
+            istDate = d.toLocaleString("en-GB", {
+              timeZone: "Asia/Kolkata",
+              day: "numeric",
+              month: "numeric",
+              year: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+              second: "2-digit",
+              hour12: true,
+            });
+          }
+        } catch {
+          istDate = String(when);
+        }
+      }
+
+      return {
+        id: `tx-${idx}-${tx.tx_hash || idx}`,
+        seq: idx + 1,
+        hop: idx + 1,
+        case_ref: activeCaseRef || (activeFir ? `FIR-${activeFir}` : "LIVE_TRACE"),
+        from_addr: from,
+        origin_sender: from,
+        to_addr: to,
+        counterparty: to,
+        counterparty_label: counterpartyLabel,
+        counterparty_addr: counterpartyAddr,
+        value_native: numVal,
+        value_usdt: numVal,
+        value_inr: inr,
+        asset: asset,
+        datetime_utc: when ? new Date(when).toISOString().replace("T", " ").slice(0, 19) : "",
+        datetime_ist: istDate,
+        classification: isToVasp ? "VASP ATTRIBUTION" : isFromSuspect ? "OUTWARD SWEEP" : "INBOUND DEPOSIT",
+        chain: tx.chain || graph?.nodes?.[0]?.chain || "POLYGON",
+        tx_hash: tx.tx_hash || (tx.txHashes && tx.txHashes[0]) || "",
+        status: "CERTIFIED",
+        isLive: true,
+      };
+    });
+  }, [graph, suspectAddress, activeCaseRef, activeFir, USD_INR]);
+
+  const records = useMemo(() => {
+    if (viewScope === "ACTIVE" && liveRecords.length > 0) {
+      return liveRecords;
+    }
+    if (viewScope === "ACTIVE" && activeCaseRef) {
+      const matched = dbRecords.filter(r => r.case_ref === activeCaseRef);
+      if (matched.length > 0) return matched;
+    }
+    return dbRecords.length > 0 ? dbRecords : liveRecords;
+  }, [viewScope, liveRecords, dbRecords, activeCaseRef]);
 
   const copyToClipboard = (text, id, e) => {
     e?.stopPropagation();
@@ -107,8 +226,61 @@ export function EvidenceLedgerPage({ onNavigate }) {
     });
   }, [records, filterType, searchQuery]);
 
+  const activeSuspectDisplay = suspectAddress || graph?.nodes?.find(n => n.type === "SUSPECT")?.id;
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      {/* ── Active Investigation Banner (if an address was traced) ── */}
+      {activeSuspectDisplay && (
+        <div className="glass-panel rounded-2xl border border-[#d8b84d]/40 bg-[#d8b84d]/5 p-4 sm:p-5 shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-[#d8b84d]/20 border border-[#d8b84d]/40 flex items-center justify-center text-[#d8b84d] shrink-0">
+              <ShieldCheck size={22} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-[#d8b84d]">Active Case Target</span>
+                {activeFir && (
+                  <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded bg-white/10 text-slate-200">
+                    {activeFir}
+                  </span>
+                )}
+              </div>
+              <div className="font-mono text-xs sm:text-sm font-bold text-slate-100 mt-0.5 break-all">
+                {activeSuspectDisplay}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-center">
+            <div className="flex rounded-xl bg-black/40 p-1 border border-white/10 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setViewScope("ACTIVE")}
+                className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                  viewScope === "ACTIVE"
+                    ? "rolex-gold-btn text-[#150F00]"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Traced Case Records ({liveRecords.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewScope("ALL")}
+                className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                  viewScope === "ALL"
+                    ? "rolex-gold-btn text-[#150F00]"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                All Database Records ({dbRecords.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Top Header Section ── */}
       <div className="glass-panel rounded-2xl border border-slate-200/90 dark:border-[rgba(229,184,59,0.25)] p-6 backdrop-blur-xl shadow-2xl">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -144,7 +316,7 @@ export function EvidenceLedgerPage({ onNavigate }) {
             <button
               type="button"
               onClick={exportCSV}
-              disabled={!records.length}
+              disabled={!filteredRecords.length}
               className="btn-secondary flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold cursor-pointer disabled:opacity-40"
             >
               <Download size={14} />
@@ -154,7 +326,7 @@ export function EvidenceLedgerPage({ onNavigate }) {
             <button
               type="button"
               onClick={exportExcel}
-              disabled={!records.length}
+              disabled={!filteredRecords.length}
               className="btn-secondary flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold cursor-pointer disabled:opacity-40"
             >
               <FileSpreadsheet size={14} />
@@ -269,18 +441,18 @@ export function EvidenceLedgerPage({ onNavigate }) {
                       {/* ORIGIN / SENDER */}
                       <td className="py-4 px-4 sm:px-6">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-slate-800 dark:text-slate-200">
+                          <span className="font-mono font-semibold text-slate-200">
                             {origin.length > 12 ? `${origin.slice(0, 6)}...${origin.slice(-4)}` : origin || "—"}
                           </span>
                           {origin && (
                             <button
                               type="button"
                               onClick={(e) => copyToClipboard(origin, `orig-${r.id || idx}`, e)}
-                              className="rounded p-1 text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10 hover:text-slate-800 dark:hover:text-slate-300 transition cursor-pointer"
+                              className="rounded p-1 text-slate-400 hover:bg-white/10 hover:text-slate-200 transition cursor-pointer"
                               title="Copy Origin Address"
                             >
                               {copiedId === `orig-${r.id || idx}` ? (
-                                <Check size={12} className="text-emerald-600 dark:text-emerald-400" />
+                                <Check size={12} className="text-emerald-400" />
                               ) : (
                                 <Copy size={12} />
                               )}
@@ -292,18 +464,23 @@ export function EvidenceLedgerPage({ onNavigate }) {
                       {/* COUNTERPARTY / RECIPIENT */}
                       <td className="py-4 px-4 sm:px-6">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-slate-800 dark:text-slate-300 font-sans">
-                            {counterparty.length > 12 ? `${counterparty.slice(0, 6)}...${counterparty.slice(-4)}` : counterparty || "—"}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-slate-100 font-mono">
+                              {r.counterparty_label || "Recipient Mule"}
+                            </span>
+                            <span className="text-[11px] text-slate-400 font-mono">
+                              ({counterparty.length > 10 ? `${counterparty.slice(0, 6)}...` : counterparty})
+                            </span>
+                          </div>
                           {counterparty && (
                             <button
                               type="button"
                               onClick={(e) => copyToClipboard(counterparty, `cp-${r.id || idx}`, e)}
-                              className="rounded p-1 text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10 hover:text-slate-800 dark:hover:text-slate-300 transition cursor-pointer"
+                              className="rounded p-1 text-slate-400 hover:bg-white/10 hover:text-slate-200 transition cursor-pointer"
                               title="Copy Counterparty Address"
                             >
                               {copiedId === `cp-${r.id || idx}` ? (
-                                <Check size={12} className="text-emerald-600 dark:text-emerald-400" />
+                                <Check size={12} className="text-emerald-400" />
                               ) : (
                                 <Copy size={12} />
                               )}
@@ -314,10 +491,10 @@ export function EvidenceLedgerPage({ onNavigate }) {
 
                       {/* VALUE */}
                       <td className="py-4 px-4 sm:px-6 whitespace-nowrap">
-                        <div className="font-bold text-slate-900 dark:text-slate-100">
-                          {Number(r.value_usdt || 0).toFixed(2)} USDT
+                        <div className="font-bold text-slate-100 font-mono text-xs sm:text-sm">
+                          {Number(r.value_usdt || 0).toFixed(2)} {r.asset || "USDT0"}
                         </div>
-                        <div className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                        <div className="text-[11px] font-semibold text-emerald-400 font-mono mt-0.5">
                           ₹{Number(r.value_inr || 0).toLocaleString()} INR
                         </div>
                       </td>

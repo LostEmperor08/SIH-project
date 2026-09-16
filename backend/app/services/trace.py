@@ -41,6 +41,7 @@ async def trace_multi_hop(
 ) -> TraceResult:
     result = TraceResult()
     seen_edges: set[str] = set()
+    history_cache: dict[str, list[NormEdge]] = {}
 
     async with HttpClient(cfg) as http:
         prices = PriceCache(cfg)
@@ -60,10 +61,19 @@ async def trace_multi_hop(
                 if c not in px_for:
                     px_for[c] = result.prices.get(c) or await prices.get(c, http)
 
-            tasks = [
-                address_history(c, a, cap, http, cfg, px_for[c], include_unconfirmed)
-                for c, a in frontier
-            ]
+            cur_cap = max(cap, 100) if depth == 0 else min(cap, 20)
+
+            async def fetch_one(chain: str, addr: str) -> list[NormEdge]:
+                cache_key = f"{chain}:{addr}:{cur_cap}:{include_unconfirmed}"
+                if cache_key in history_cache:
+                    return history_cache[cache_key]
+                edges = await address_history(
+                    chain, addr, cur_cap, http, cfg, px_for[chain], include_unconfirmed
+                )
+                history_cache[cache_key] = edges
+                return edges
+
+            tasks = [fetch_one(c, a) for c, a in frontier]
             settled = await asyncio.gather(*tasks, return_exceptions=True)
 
             next_layer: dict[str, tuple[str, str]] = {}
@@ -94,14 +104,14 @@ async def trace_multi_hop(
                     k = f"{e.chain}:{a}"
                     value_of[k] = value_of.get(k, 0.0) + e.value_usd
 
-            # Stable ordering: value descending, then address ascending.
-            # Sorting on value alone leaves ties in arbitrary dict order, so
-            # two identical traces could expand different wallets and return
-            # different node counts — which is exactly what was happening.
+            # Filter for meaningful counterparties (value > 0 or top ranked)
             ranked = sorted(next_layer.items(),
                             key=lambda kv: (-value_of.get(kv[0], 0.0), kv[0]))
+            
+            # Limit branch factor per hop for fast execution while keeping critical path
+            branch_limit = cfg.max_addresses_per_hop if depth == 0 else min(5, cfg.max_addresses_per_hop)
             frontier = []
-            for k, (c, a) in ranked[: cfg.max_addresses_per_hop]:
+            for k, (c, a) in ranked[:branch_limit]:
                 result.visited[k] = depth + 1
                 frontier.append((c, a))
 

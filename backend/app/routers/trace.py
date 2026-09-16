@@ -131,6 +131,13 @@ async def trace(
 
     graph = build_graph(tr, req.targets, wallets, scores)
 
+    # Sort edges chronologically descending (newest first) for forensic investigation
+    raw_txs = sorted(
+        [e.to_row() for e in tr.edges],
+        key=lambda r: str(r.get("block_time") or ""),
+        reverse=True,
+    )
+
     return TraceResponse(
         ok=True, targets=req.targets, hops=hops, chains=chains,
         stats={
@@ -149,5 +156,6 @@ async def trace(
         },
         providerErrors=tr.errors,
         graph=graph,
+        transactions=raw_txs,
         elapsedMs=int((time.perf_counter() - t0) * 1000),
     )
