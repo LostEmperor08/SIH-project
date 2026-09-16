@@ -42,16 +42,17 @@ export function normalizeBackendTrace(payload) {
 
   const nodes = rawNodes.map((n) => {
     const d = n.data ?? {};
-    const riskVal = d.riskScore ?? d.risk_score ?? d.risk ?? n.riskScore ?? n.risk_score ?? n.risk ?? 0;
+    const riskVal = Number(d.riskScore ?? d.risk_score ?? d.risk ?? n.riskScore ?? n.risk_score ?? n.risk ?? 0);
+    const bandVal = (d.riskBand ?? d.risk_band ?? (riskVal >= 80 ? "CRITICAL" : riskVal >= 60 ? "HIGH" : riskVal >= 35 ? "MEDIUM" : "LOW")).toUpperCase();
     return {
       id: d.address ?? n.id,
       label: d.label ?? d.address ?? n.id,
       type: nodeType(d),
       balance: Number(d.inUsd ?? d.in_usd ?? 0) - Number(d.outUsd ?? d.out_usd ?? 0),
       firstSeen: d.firstSeen ?? d.first_seen ?? null,
-      risk: Number(riskVal),
-      riskScore: Number(riskVal),
-      riskBand: d.riskBand ?? d.risk_band ?? null,
+      risk: riskVal,
+      riskScore: riskVal,
+      riskBand: bandVal,
       sanctionFloorApplied: !!(d.sanctionFloorApplied ?? d.sanction_floor_applied),
       sanctionFloorReason: d.sanctionFloorReason ?? d.sanction_floor_reason ?? null,
       vaspAttribution: d.vaspAttribution ?? d.vasp_attribution ?? null,

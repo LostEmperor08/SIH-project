@@ -17,13 +17,23 @@ const TYPE_ICONS = {
 
 function FlowNode({ data }) {
   const Icon = TYPE_ICONS[data.type] ?? Wallet;
+  const riskVal = Math.round(Number(data.riskScore ?? data.risk ?? 0));
+  const riskBand = (data.riskBand || (riskVal >= 80 ? "CRITICAL" : riskVal >= 60 ? "HIGH" : riskVal >= 35 ? "MEDIUM" : "LOW")).toUpperCase();
+
   return (
     <div className={`flow-node flow-node-${data.type?.toLowerCase()} cursor-pointer transition-transform hover:scale-105`}>
       <Handle type="target" position={Position.Left} className="flow-handle" />
       <div className="flow-node-top">
         <span className="flow-node-icon"><Icon size={14} /></span>
         <span className="flow-node-type">{TYPE_LABEL[data.type] ?? data.type}</span>
-        <span className="flow-node-status" />
+        <span className={`flow-node-risk-pill px-1.5 py-0.5 rounded text-[9px] font-mono font-extrabold uppercase ${
+          riskBand === "CRITICAL" ? "bg-red-500/30 text-red-300 border border-red-500/50" :
+          riskBand === "HIGH" ? "bg-amber-500/30 text-amber-300 border border-amber-500/50" :
+          riskBand === "MEDIUM" || riskBand === "ELEVATED" ? "bg-yellow-500/30 text-yellow-300 border border-yellow-500/50" :
+          "bg-emerald-500/30 text-emerald-300 border border-emerald-500/50"
+        }`}>
+          {riskBand} ({riskVal})
+        </span>
       </div>
       <strong>{data.label}</strong>
       <span className="flow-node-address mono">{data.id}</span>

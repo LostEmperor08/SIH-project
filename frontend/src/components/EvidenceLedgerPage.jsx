@@ -240,9 +240,14 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
 
   const filteredRecords = useMemo(() => {
     return records.filter(r => {
-      const classification = (r.classification || "").toUpperCase();
+      const band = (r.risk_band || "").toUpperCase();
+      const score = Number(r.risk_score || 0);
+
       const matchFilter = 
         filterType === "ALL" ? true :
+        filterType === "HIGH_CRIT" ? (band === "HIGH" || band === "CRITICAL" || score >= 60) :
+        filterType === "MED" ? (band === "MEDIUM" || band === "ELEVATED" || band === "MODERATE" || (score >= 35 && score < 60)) :
+        filterType === "LOW" ? (band === "LOW" || score < 35) :
         filterType === "SWEEP" ? classification.includes("SWEEP") :
         filterType === "DEPOSIT" ? classification.includes("DEPOSIT") :
         filterType === "VASP" ? classification.includes("VASP") : true;
@@ -375,12 +380,14 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
 
         {/* Search & Filter Bar */}
         <div className="mt-5 flex flex-col gap-3 pt-5 border-t border-slate-200 dark:border-white/5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="chip-strip flex items-center gap-2">
+          <div className="chip-strip flex flex-wrap items-center gap-2">
             <span className="chip-strip__label text-xs font-bold text-slate-500 dark:text-slate-400">Filter:</span>
             {[
               { id: "ALL", label: `All (${records.length})` },
+              { id: "HIGH_CRIT", label: "High / Critical Risk" },
+              { id: "MED", label: "Medium Risk" },
+              { id: "LOW", label: "Low Risk" },
               { id: "SWEEP", label: "Outward Sweep" },
-              { id: "DEPOSIT", label: "Inbound Deposit" },
               { id: "VASP", label: "VASP Endpoints" },
             ].map(tab => (
               <button
