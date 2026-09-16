@@ -344,9 +344,9 @@ def score_wallet(
     poison = _detect_poisoning(s.senders | s.receivers)
     if poison:
         add("ADDRESS_POISONING", "Address-poisoning cluster", 18,
-            f"{poison['count']} counterparties share the crafted pattern "
-            f"{poison['prefix']}…{poison['suffix']} — look-alike addresses "
-            "seeded to make the victim copy the wrong one",
+            f"transacts with {poison['count']} counterparties sharing the "
+            f"crafted pattern {poison['prefix']}…{poison['suffix']} — look-alike "
+            "addresses seeded so the victim copies the wrong one",
             **poison)
 
     if s.values:
@@ -517,3 +517,108 @@ def score_graph(
             is_target=a in target_set,
         )
     return out
+
+
+# =====================================================================
+# ML FEATURE CONTRACT
+#
+# This is the single source of truth for what the model sees. Before this
+# existed there were two definitions — aiml/src/features/schema.py and the
+# stats computed here — which is the classic training/serving skew: the
+# model scores 0.95 offline and produces nonsense in production because the
+# serving path built a column differently.
+#
+# Now the ML trains on EXACTLY what /trace computes, because it trains on
+# /trace's own output. There is nothing to keep in sync.
+# =====================================================================
+
+# Order is part of the contract: a model is a positional array of floats.
+# Append only — never reorder or delete, or an old model silently reads the
+# wrong column. Bump FEATURE_VERSION when you append.
+FEATURE_VERSION = "1.0.0"
+
+FEATURE_ORDER: list[str] = [
+    # flow
+    "in_usd", "out_usd", "balance_usd", "pass_through_ratio",
+    "log_in_usd", "log_out_usd",
+    # shape
+    "tx_count", "fan_in", "fan_out", "fan_ratio", "degree",
+    # time
+    "active_days", "dormancy_days", "tx_per_day",
+    # proximity (99 = no path found — a real observation, not missing data)
+    "sanction_hops", "mixer_hops", "exchange_hops", "darknet_hops",
+    "peel_depth",
+    # composition
+    "distinct_assets", "unvalued_ratio", "dust_ratio", "round_ratio",
+    "structuring_ratio",
+    # the heuristic verdict itself, as a feature the model may agree or
+    # disagree with — it learns where the rules are wrong
+    "heuristic_score",
+]
+
+NO_PATH = 99.0
+
+
+def _log1p(x: float) -> float:
+    return math.log1p(max(x, 0.0))
+
+
+def feature_vector(score: dict[str, Any]) -> dict[str, float]:
+    """
+    Turn one wallet's score dict (from score_graph) into a flat numeric
+    feature map. Deterministic, no I/O, no randomness.
+    """
+    st = score.get("stats") or {}
+    in_usd = float(st.get("inUsd") or 0.0)
+    out_usd = float(st.get("outUsd") or 0.0)
+    tx = float(st.get("txCount") or 0)
+    fan_in = float(st.get("fanIn") or 0)
+    fan_out = float(st.get("fanOut") or 0)
+    active = float(st.get("activeDays") or 0.0)
+    unvalued = float(st.get("unvaluedTransfers") or 0)
+
+    codes = {f.get("code") for f in (score.get("factors") or [])}
+
+    def hop(key: str) -> float:
+        v = score.get(key)
+        return NO_PATH if v is None else float(v)
+
+    return {
+        "in_usd": in_usd,
+        "out_usd": out_usd,
+        "balance_usd": float(st.get("balanceUsd") or 0.0),
+        "pass_through_ratio": (out_usd / in_usd) if in_usd > 0 else 0.0,
+        "log_in_usd": _log1p(in_usd),
+        "log_out_usd": _log1p(out_usd),
+        "tx_count": tx,
+        "fan_in": fan_in,
+        "fan_out": fan_out,
+        "fan_ratio": fan_in / (fan_out + 1.0),
+        "degree": fan_in + fan_out,
+        "active_days": active,
+        "dormancy_days": float(st.get("dormancyDays") or 0.0),
+        "tx_per_day": tx / max(active, 1.0),
+        "sanction_hops": hop("hops_to_sanctioned"),
+        "mixer_hops": hop("hops_to_mixer"),
+        "exchange_hops": hop("hops_to_exchange"),
+        "darknet_hops": hop("hops_to_darknet"),
+        "peel_depth": float(score.get("peel_chain_depth") or 0),
+        "distinct_assets": float(len(st.get("assets") or [])),
+        "unvalued_ratio": unvalued / max(tx, 1.0),
+        # these three are carried as binary evidence that the rule fired;
+        # the model can learn to weight them differently than the rules do
+        "dust_ratio": 1.0 if "DUST_SEEDING" in codes else 0.0,
+        "round_ratio": 1.0 if "ADDRESS_POISONING" in codes else 0.0,
+        "structuring_ratio": 1.0 if "STRUCTURING" in codes else 0.0,
+        "heuristic_score": float(score.get("risk_score") or 0.0),
+    }
+
+
+def feature_matrix(scores: dict[str, dict]) -> tuple[list[str], list[list[float]]]:
+    """scores (address -> score dict) -> (addresses, rows) in FEATURE_ORDER."""
+    addrs, rows = [], []
+    for addr, sc in scores.items():
+        fv = feature_vector(sc)
+        addrs.append(addr)
+        rows.append([fv[k] for k in FEATURE_ORDER])
+    return addrs, rows
