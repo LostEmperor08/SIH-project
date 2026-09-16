@@ -175,33 +175,12 @@ export async function fetchEvidenceRecords() {
   return notConfigured("the evidence ledger");
 }
 
-export async function recordEvidenceItem(item) {
-  const record = {
-    id: item.id || `ev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    hop: item.hop || 1,
-    chain: item.chain || "Polygon PoS",
-    tx_hash: item.tx_hash || "",
-    from_addr: item.origin_sender || item.from_addr || "",
-    to_addr: item.counterparty || item.to_addr || "",
-    value_usdt: item.value_usdt || item.amount || 0,
-    value_inr: item.value_inr || Math.round((item.value_usdt || item.amount || 0) * 89),
-    classification: item.classification || "INVESTIGATION_RECORD",
-    datetime_ist: item.datetime_ist || new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
-    datetime_utc: item.datetime_utc || new Date().toISOString(),
-    status: "CERTIFIED_SEC_65B",
-  };
-
-  const current = getLocal("evidence_records", []);
-  const updated = [record, ...current.filter(r => r.tx_hash !== record.tx_hash)];
-  setLocal("evidence_records", updated);
-
-  if (isSupabaseConfigured) {
-    try {
-      await supabase.from("evidence_ledger").insert([record]);
-    } catch (err) {
-      console.warn("Supabase evidence insert error", err);
-    }
-  }
-
-  return record;
+export async function recordEvidenceItem(item, caseRef) {
+  // Routed through add_evidence_link() rather than a direct insert.
+  // Migration 08 revoked INSERT on evidence_ledger because the RPC is what
+  // computes the hash chain; a direct insert stores a row with no
+  // chain_hash, and an unchained row is exactly what lets a deletion go
+  // unnoticed.
+  const { sealEvidence } = await import("./evidence.js");
+  return sealEvidence(item, caseRef ?? "UNFILED");
 }

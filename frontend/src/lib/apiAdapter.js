@@ -91,7 +91,7 @@ export function normalizeBackendTrace(payload) {
   // exchange; fall back to the highest-risk node rather than inventing one.
   const vasp =
     nodes.find((n) => n.type === "VASP") ??
-    nodes.filter((n) => !n.isTarget).sort((a, b) => (b.risk ?? 0) - (a.risk ?? 0))[0] ??
+    nodes.filter((n) => n.type !== "SUSPECT").sort((a, b) => (b.risk ?? 0) - (a.risk ?? 0))[0] ??
     null;
 
   const depositEdge = vasp

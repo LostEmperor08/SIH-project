@@ -14,6 +14,7 @@ import { NotificationsPage } from "./NotificationsPage.jsx";
 import { ProfilePage } from "./ProfilePage.jsx";
 import { NodeDetailDrawer } from "./NodeDetailDrawer.jsx";
 import { traceFunds, buildNotice, buildDossier } from "../lib/api.js";
+import { sealTraceEvidence, caseRefFor } from "../lib/evidence.js";
 
 const emptyMetrics = [
   ["Traced volume", "--", "₹0 INR"],
@@ -62,6 +63,8 @@ const cardItemVariants = {
 export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState("workspace");
   const [graph, setGraph] = useState(null);
+  const [caseRef, setCaseRef] = useState(null);
+  const [evidenceStatus, setEvidenceStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [firNo, setFirNo] = useState("SIH/2026/00412");
@@ -76,6 +79,22 @@ export default function DashboardPage() {
     try {
       const data = await traceFunds({ address, chain, complaintDate: fir });
       setGraph(data);
+
+      // Seal the traced hops into the hash-chained evidence ledger.
+      // Deliberately after setGraph: the officer sees the graph immediately
+      // and sealing continues behind it. A sealing failure must never hide
+      // a trace that succeeded.
+      const caseRef = caseRefFor(fir, address);
+      setCaseRef(caseRef);
+      sealTraceEvidence(data, caseRef)
+        .then((r) => {
+          setEvidenceStatus(
+            r.errors.length
+              ? `Sealed ${r.sealed} of ${r.sealed + r.errors.length} records — ${r.errors[0]}`
+              : `${r.sealed} evidence records sealed to ${caseRef}`
+          );
+        })
+        .catch((e) => setEvidenceStatus(`Evidence sealing failed: ${e.message}`));
     } catch (traceError) {
       setError(traceError.message ?? "Trace failed");
     } finally {
