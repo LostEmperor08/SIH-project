@@ -91,9 +91,13 @@ class GraphNodeData(BaseModel):
     isTarget: bool = False
     entity: str = "unknown"
     vaspName: str | None = None
+    vaspAttribution: dict[str, Any] | None = None
     sanctioned: bool = False
     riskScore: float | None = None
     riskBand: str | None = None
+    sanctionFloorApplied: bool = False
+    sanctionFloorReason: str | None = None
+    transactionAggregates: dict[str, Any] = {}
     narrative: str | None = None
     typologies: list[dict[str, Any]] = []
     recommendedActions: list[str] = []
@@ -125,6 +129,10 @@ class GraphEdgeData(BaseModel):
     lastSeen: str | None = None
     txHashes: list[str] = []
     explorerUrls: list[str] = []
+    risk: dict[str, Any] | None = None
+    relevance: dict[str, Any] | None = None
+    evidence: list[dict[str, Any]] = []
+    flags: list[str] = []
 
 
 class GraphEdge(BaseModel):

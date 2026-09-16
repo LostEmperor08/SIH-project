@@ -50,6 +50,10 @@ export function normalizeBackendTrace(payload) {
       firstSeen: d.firstSeen ?? null,
       risk: d.riskScore ?? 0,
       riskBand: d.riskBand ?? null,
+      sanctionFloorApplied: !!d.sanctionFloorApplied,
+      sanctionFloorReason: d.sanctionFloorReason ?? null,
+      vaspAttribution: d.vaspAttribution ?? null,
+      transactionAggregates: d.transactionAggregates ?? {},
       txCount: d.degree ?? 0,
       chain: d.chain,
       sanctioned: !!d.sanctioned,
@@ -83,34 +87,33 @@ export function normalizeBackendTrace(payload) {
       txCount: d.txCount ?? 1,
       label: e.label,
       animated: !!e.animated,
+      risk: d.risk ?? null,
+      relevance: d.relevance ?? null,
+      evidence: d.evidence ?? [],
+      flags: d.flags ?? [],
     };
   });
 
-  // The VASP endpoint is the point of the whole trace: it is who a Section
-  // 91 notice gets served on. Prefer a wallet the backend put 0 hops from an
-  // exchange; fall back to the highest-risk node rather than inventing one.
-  const vasp =
-    nodes.find((n) => n.type === "VASP") ??
-    nodes.filter((n) => n.type !== "SUSPECT").sort((a, b) => (b.risk ?? 0) - (a.risk ?? 0))[0] ??
-    null;
+  // Decoupled VASP Attribution: look strictly for wallets identified as a VASP/Exchange.
+  // Never fall back to high-risk non-VASP wallets.
+  const vaspNode = nodes.find((n) => n.vaspAttribution || n.type === "VASP");
 
-  const depositEdge = vasp
-    ? edges.filter((e) => e.target === vasp.id).sort((a, b) => b.amount - a.amount)[0]
+  const depositEdge = vaspNode
+    ? edges.filter((e) => e.target === vaspNode.id).sort((a, b) => b.amount - a.amount)[0]
     : null;
 
-  const attribution = vasp
+  const attribution = vaspNode
     ? {
-        // No invented exchange name. If the backend could not attribute one,
-        // the UI says so — naming the wrong VASP sends the freeze request to
-        // the wrong place.
-        exchange_name: vasp.label && vasp.label !== vasp.id ? vasp.label : "Unattributed endpoint",
-        deposit_address: vasp.id,
-        hot_wallet_address: vasp.id,
+        exchange_name: vaspNode.vaspAttribution?.name ?? (vaspNode.label && vaspNode.label !== vaspNode.id ? vaspNode.label : "Unattributed VASP Endpoint"),
+        deposit_address: vaspNode.id,
+        hot_wallet_address: vaspNode.id,
         tx_hash: depositEdge?.tx_hash ?? "",
         deposit_timestamp: depositEdge?.timestamp ?? "",
-        confidence: Math.min(1, Math.max(0, Number(vasp.risk ?? 0) / 100)),
-        hops: vasp.hop ?? payload?.hops ?? 0,
+        confidence: vaspNode.vaspAttribution?.confidence ?? 0.85,
+        hops: vaspNode.hop ?? payload?.hops ?? 0,
         time_to_attribution_ms: payload?.elapsedMs ?? 0,
+        entity_type: vaspNode.vaspAttribution?.entity_type ?? "exchange",
+        attribution_evidence: vaspNode.vaspAttribution?.evidence ?? [],
       }
     : null;
 

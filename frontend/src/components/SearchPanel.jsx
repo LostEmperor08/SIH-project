@@ -36,7 +36,7 @@ function detectChainFromAddress(addr) {
 }
 
 export default function SearchPanel({ onTrace, loading, elapsedTime = 0 }) {
-  const [address, setAddress] = useState("TX7sK...victim");
+  const [address, setAddress] = useState("");
   const [chain, setChain] = useState("Tron (TRC-20)");
   const [firNo, setFirNo] = useState("SIH/2026/00412");
   const [hops, setHops] = useState(2);

@@ -140,10 +140,25 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
         }
       }
 
+      const fromNode = nodesMap.get(from);
+      const counterpartyNode = nodesMap.get(counterpartyAddr);
+
+      // Extract transaction-level risk, relevance, and explainability
+      const txRiskObj = tx.risk || {};
+      const txRelObj = tx.relevance || {};
+
+      const txRiskScore = txRiskObj.score ?? Number(
+        counterpartyNode?.data?.riskScore ?? counterpartyNode?.risk ?? fromNode?.data?.riskScore ?? fromNode?.risk ?? 0
+      );
+      const txRiskBand = txRiskObj.band || (txRiskScore >= 80 ? "CRITICAL" : txRiskScore >= 60 ? "HIGH" : txRiskScore >= 35 ? "MEDIUM" : "LOW");
+      const relevanceScore = txRelObj.score ?? 50.0;
+      const taintShare = txRelObj.taint_share ?? 0.0;
+      const riskFactors = txRiskObj.factors || [];
+
       return {
         id: `tx-${idx}-${tx.tx_hash || idx}`,
         seq: idx + 1,
-        hop: idx + 1,
+        hop: txRelObj.hop || idx + 1,
         case_ref: activeCaseRef || (activeFir ? `FIR-${activeFir}` : "LIVE_TRACE"),
         from_addr: from,
         origin_sender: from,
@@ -160,6 +175,11 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
         classification: isToVasp ? "VASP ATTRIBUTION" : isFromSuspect ? "OUTWARD SWEEP" : "INBOUND DEPOSIT",
         chain: tx.chain || graph?.nodes?.[0]?.chain || "POLYGON",
         tx_hash: tx.tx_hash || (tx.txHashes && tx.txHashes[0]) || "",
+        risk_score: txRiskScore,
+        risk_band: txRiskBand,
+        relevance_score: relevanceScore,
+        taint_share: taintShare,
+        risk_factors: riskFactors,
         status: "CERTIFIED",
         isLive: true,
       };
@@ -446,6 +466,7 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
                   <th className="py-4 px-4 sm:px-6">ORIGIN / SENDER</th>
                   <th className="py-4 px-4 sm:px-6">COUNTERPARTY / RECIPIENT</th>
                   <th className="py-4 px-4 sm:px-6">VALUE</th>
+                  <th className="py-4 px-4 sm:px-6">RISK & RELEVANCE</th>
                   <th className="py-4 px-4 sm:px-6">CLASSIFICATION</th>
                   <th className="py-4 px-4 sm:px-6 text-right">AUDIT</th>
                 </tr>
@@ -532,6 +553,32 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
                         </div>
                         <div className="text-[11px] font-semibold text-emerald-400 font-mono mt-0.5">
                           ₹{Number(r.value_inr || 0).toLocaleString()} INR
+                        </div>
+                      </td>
+
+                      {/* RISK & RELEVANCE */}
+                      <td className="py-4 px-4 sm:px-6 whitespace-nowrap">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
+                              r.risk_band === "CRITICAL" ? "bg-red-500/20 text-red-400 border border-red-500/40" :
+                              r.risk_band === "HIGH" ? "bg-amber-500/20 text-amber-400 border border-amber-500/40" :
+                              r.risk_band === "MEDIUM" ? "bg-yellow-500/20 text-yellow-400 border border-yellow-500/40" :
+                              "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
+                            }`}>
+                              {r.risk_band || "LOW"} ({Math.round(r.risk_score || 0)})
+                            </span>
+                            {r.relevance_score != null && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                                Rel: {Math.round(r.relevance_score)}/100
+                              </span>
+                            )}
+                          </div>
+                          {r.taint_share > 0 && (
+                            <div className="text-[10px] text-slate-400 font-mono">
+                              Taint: {(r.taint_share * 100).toFixed(0)}%
+                            </div>
+                          )}
                         </div>
                       </td>
 

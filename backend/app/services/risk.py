@@ -1,20 +1,18 @@
 """
-Risk scoring — computed in the gateway, from the traced graph alone.
+Risk scoring & VASP attribution engines — SIH 26183 specification.
 
-Why this exists even though there is an ML layer and a SQL detection engine:
-both of those need something else to be up. The ML service may be down, and
-the SQL engine needs the data already persisted. An officer who pastes an
-address must get a scored graph regardless, so this is the always-available
-path. When the ML service IS reachable, its scores are merged on top and the
-response says which was used.
+Maintains THREE SEPARATE, independent concepts:
+  1. Transaction Risk & Case Relevance (score_transaction)
+  2. Wallet Risk (score_wallet / score_graph)
+  3. VASP Attribution Confidence (calculate_vasp_attribution_confidence)
 
-Every point of the score is attributed to a named factor. A number an
-officer cannot explain is useless in a case file — and a risk score that
-contributes to freezing someone's assets has to be defensible months later,
-in front of someone hostile.
-
-Nothing here is random, seeded, or mocked. Feed it an empty graph and it
-returns zero with a reason, not an invented number.
+These are NEVER treated as interchangeable:
+  * Wallet risk does NOT become transaction risk automatically.
+  * Transaction risk does NOT become VASP attribution confidence.
+  * VASP identification does NOT depend on wallet risk.
+  * confidence is NEVER computed as risk_score / 100.
+  * Direct sanctions match on wallets/transactions enforces a deterministic
+    floor (minimum score 90.0 CRITICAL) with explicit override tracking.
 """
 from __future__ import annotations
 
@@ -26,18 +24,73 @@ from typing import Any
 
 from ..providers.base import NormEdge
 
+RISK_ENGINE_VERSION = "2.0.0"
 SECONDS_PER_DAY = 86_400.0
 
-# Bands. Deliberately not evenly spaced: the gap between 'medium' and 'high'
-# is where an officer's workload changes, so it sits above the midpoint.
-BAND_CRITICAL = 80.0
-BAND_HIGH = 60.0
-BAND_MEDIUM = 35.0
+# Centralized Score Bands
+TX_RISK_BANDS = [
+    (80.0, "CRITICAL"),
+    (60.0, "HIGH"),
+    (40.0, "ELEVATED"),
+    (20.0, "MODERATE"),
+    (0.0, "LOW"),
+]
+
+WALLET_RISK_BANDS = [
+    (80.0, "critical"),
+    (60.0, "high"),
+    (35.0, "medium"),
+    (0.0, "low"),
+]
+
+BAND_CRITICAL = "critical"
+BAND_HIGH = "high"
+
+
+def tx_risk_band(score: float) -> str:
+    for threshold, band in TX_RISK_BANDS:
+        if score >= threshold:
+            return band
+    return "LOW"
+
+
+def wallet_risk_band(score: float) -> str:
+    for threshold, band in WALLET_RISK_BANDS:
+        if score >= threshold:
+            return band
+    return "low"
+
+
+@dataclass
+class TransactionFactor:
+    """One named contribution to a transaction's risk score."""
+    code: str
+    label: str
+    raw_points: float
+    confidence: float
+    effective_points: float
+    evidence: str
+    source: str = "rule_engine"
+    source_type: str = "heuristic"
+    observations: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "label": self.label,
+            "raw_points": round(self.raw_points, 2),
+            "confidence": round(self.confidence, 2),
+            "effective_points": round(self.effective_points, 2),
+            "evidence": self.evidence,
+            "source": self.source,
+            "source_type": self.source_type,
+            "observations": self.observations,
+        }
 
 
 @dataclass
 class Factor:
-    """One named contribution to the score."""
+    """One named contribution to a wallet's risk score."""
     code: str
     label: str
     points: float
@@ -73,7 +126,6 @@ class WalletStats:
 
     @property
     def pass_through_ratio(self) -> float:
-        """1.0 means everything that came in went straight back out."""
         return self.out_usd / self.in_usd if self.in_usd > 0 else 0.0
 
     @property
@@ -89,6 +141,349 @@ class WalletStats:
         return (datetime.now(timezone.utc).timestamp() - max(self.times)) / SECONDS_PER_DAY
 
 
+# =====================================================================
+# TRANSACTION RISK & RELEVANCE ENGINE
+# =====================================================================
+def _epoch(iso_ts: str) -> float:
+    try:
+        return datetime.fromisoformat(str(iso_ts).replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _median(vals: list[float]) -> float:
+    if not vals:
+        return 0.0
+    s = sorted(vals)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 == 1 else (s[mid - 1] + s[mid]) / 2.0
+
+
+def _modified_z_score(val: float, vals: list[float]) -> float:
+    """
+    Modified Z-score using Median Absolute Deviation (MAD).
+      modified_z = 0.6745 * (x - median) / MAD
+    Resistant to heavy tails in cryptocurrency transfer distributions.
+    """
+    if len(vals) < 3:
+        return 0.0
+    med = _median(vals)
+    devs = [abs(v - med) for v in vals]
+    mad = _median(devs)
+    if mad <= 1e-6:
+        return 0.0
+    return 0.6745 * (val - med) / mad
+
+
+def calculate_vasp_attribution_confidence(
+    address: str,
+    chain: str,
+    *,
+    wallets_intel: dict[str, dict] | None = None,
+    explicit_vasp_name: str | None = None,
+    explicit_entity_type: str | None = None,
+) -> dict[str, Any] | None:
+    """
+    Independent VASP Attribution Confidence calculation.
+    COMPLETELY DECOUPLED FROM RISK SCORES.
+    Never uses risk_score / 100 or non-VASP high-risk fallbacks.
+    """
+    wallets_intel = wallets_intel or {}
+    k = f"{chain}:{address}"
+    intel = wallets_intel.get(k) or wallets_intel.get(address) or {}
+
+    vasp_name = explicit_vasp_name or intel.get("vasp_name")
+    entity_type = explicit_entity_type or intel.get("entity_type")
+
+    # If entity is not a VASP/exchange and no name exists, return None
+    if not vasp_name and entity_type not in ("exchange", "VASP", "vasp"):
+        return None
+
+    evidence = []
+    base_confidence = 0.0
+
+    if intel.get("is_known_deposit"):
+        base_confidence = 0.98
+        evidence.append({
+            "type": "known_deposit_address",
+            "description": f"Verified deposit endpoint for {vasp_name or 'VASP'}",
+            "confidence": 0.98,
+        })
+    elif intel.get("is_known_hot_wallet"):
+        base_confidence = 0.95
+        evidence.append({
+            "type": "known_hot_wallet",
+            "description": f"Verified infrastructure hot wallet for {vasp_name or 'VASP'}",
+            "confidence": 0.95,
+        })
+    elif vasp_name:
+        base_confidence = 0.88
+        evidence.append({
+            "type": "cluster_attribution",
+            "description": f"Address attributed to {vasp_name} via entity cluster database",
+            "confidence": 0.88,
+        })
+    elif entity_type in ("exchange", "VASP", "vasp"):
+        base_confidence = 0.75
+        evidence.append({
+            "type": "vasp_registry",
+            "description": "Registered exchange infrastructure endpoint",
+            "confidence": 0.75,
+        })
+
+    return {
+        "name": vasp_name or "Identified Exchange",
+        "entity_type": "exchange",
+        "confidence": round(base_confidence, 2),
+        "evidence": evidence,
+    }
+
+
+def score_transaction(
+    edge: NormEdge,
+    all_edges: list[NormEdge],
+    targets: list[str],
+    *,
+    wallets_intel: dict[str, dict] | None = None,
+    flags: dict[str, list[str]] | None = None,
+    history_intel: dict[str, Any] | None = None,
+    target_values: dict[str, float] | None = None,
+    hop_map: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """
+    Transaction-Level Risk Engine & Relevance Scorer (SIH 26183).
+    Weighted 100-point deterministic model with factor confidence.
+    """
+    wallets_intel = wallets_intel or {}
+    flags = flags or {}
+    history_intel = history_intel or {}
+    target_values = target_values or {}
+    hop_map = hop_map or {}
+    target_set = set(targets)
+
+    frm, to = edge.from_address, edge.to_address
+    chain = edge.chain
+    val_usd = edge.value_usd
+
+    factors: list[TransactionFactor] = []
+    evidence_strings: list[str] = []
+    flag_codes: list[str] = []
+
+    def add_factor(code: str, label: str, raw_pts: float, conf: float, ev_text: str, **obs):
+        eff_pts = raw_pts * conf
+        if eff_pts > 0:
+            factors.append(TransactionFactor(
+                code=code, label=label, raw_points=round(raw_pts, 2),
+                confidence=round(conf, 2), effective_points=round(eff_pts, 2),
+                evidence=ev_text, source="rule_engine", observations=obs
+            ))
+            evidence_strings.append(ev_text)
+            flag_codes.append(code)
+
+    # 1. Fund-flow / Case Relevance (0-20 pts)
+    total_target_val = sum(target_values.values()) if target_values else 0.0
+    if total_target_val <= 0:
+        target_txs = [e.value_usd for e in all_edges if e.from_address in target_set]
+        total_target_val = sum(target_txs) if target_txs else val_usd
+
+    taint_share = min(1.0, val_usd / max(total_target_val, 1.0)) if val_usd > 0 else 0.0
+    fund_attribution_share = taint_share
+
+    if taint_share >= 0.80:
+        add_factor("HIGH_FUND_ATTRIBUTION", "High case fund attribution", 20.0, 1.0,
+                   f"Carries {taint_share:.1%} of reported case funds (${val_usd:,.2f})",
+                   taintShare=round(taint_share, 4))
+    elif taint_share >= 0.50:
+        add_factor("MODERATE_FUND_ATTRIBUTION", "Significant case fund attribution", 16.0, 1.0,
+                   f"Carries {taint_share:.1%} of reported case funds",
+                   taintShare=round(taint_share, 4))
+    elif taint_share >= 0.20:
+        add_factor("PARTIAL_FUND_ATTRIBUTION", "Partial case fund attribution", 10.0, 0.9,
+                   f"Carries {taint_share:.1%} of reported case funds",
+                   taintShare=round(taint_share, 4))
+    elif taint_share >= 0.05:
+        add_factor("LOW_FUND_ATTRIBUTION", "Low case fund attribution", 5.0, 0.8,
+                   f"Carries {taint_share:.1%} of reported case funds",
+                   taintShare=round(taint_share, 4))
+    elif taint_share > 0.0:
+        add_factor("TRACE_PATH_MEMBER", "On case flow path", 1.0, 0.5,
+                   "Minor flow on active case money path",
+                   taintShare=round(taint_share, 4))
+
+    # 2. Counterparty Intelligence (0-20 pts)
+    sanctions_set = set(flags.get("sanctioned", []))
+    mixers_set = set(flags.get("mixers", []))
+    darknet_set = set(flags.get("darknet", []))
+    exchanges_set = set(flags.get("exchanges", []))
+    illicit_set = set(flags.get("illicit", []))
+
+    is_sanction_tx = frm in sanctions_set or to in sanctions_set
+    if is_sanction_tx:
+        add_factor("SANCTIONS_EXPOSURE", "Direct sanctions counterparty", 20.0, 1.0,
+                   "Transaction directly involves an OFAC-sanctioned wallet address",
+                   sanctionedAddress=to if to in sanctions_set else frm)
+
+    if (to in mixers_set or frm in mixers_set) and not is_sanction_tx:
+        add_factor("MIXER_INTERACTION", "Mixer / tumbler interaction", 16.0, 0.9,
+                   "Transaction interacts directly with a privacy mixer/tumbler",
+                   mixerAddress=to if to in mixers_set else frm)
+
+    if (to in darknet_set or frm in darknet_set) and not is_sanction_tx:
+        add_factor("DARKNET_ENDPOINT", "Darknet market exposure", 16.0, 0.9,
+                   "Transaction interacts directly with darknet infrastructure",
+                   darknetAddress=to if to in darknet_set else frm)
+
+    if (to in illicit_set or frm in illicit_set) and not is_sanction_tx:
+        add_factor("ILLICIT_CLUSTER", "Known illicit cluster hit", 16.0, 0.9,
+                   "Transaction counterparty belongs to a verified fraud cluster",
+                   illicitAddress=to if to in illicit_set else frm)
+
+    # 3. Behavioral Anomaly (Modified Z-score) (0-15 pts)
+    sender_vals = [e.value_usd for e in all_edges if e.from_address == frm]
+    mod_z = _modified_z_score(val_usd, sender_vals)
+    if mod_z >= 3.5:
+        add_factor("EXTREME_VALUE_ANOMALY", "Extreme value anomaly", 15.0, 0.9,
+                   f"Transfer amount (${val_usd:,.2f}) is an extreme statistical anomaly (Modified Z={mod_z:.1f})",
+                   modifiedZ=round(mod_z, 2))
+    elif mod_z >= 2.5:
+        add_factor("STRONG_VALUE_ANOMALY", "Strong value anomaly", 10.0, 0.8,
+                   f"Transfer amount is a strong anomaly (Modified Z={mod_z:.1f})",
+                   modifiedZ=round(mod_z, 2))
+    elif mod_z >= 1.5:
+        add_factor("MODERATE_VALUE_ANOMALY", "Moderate value anomaly", 5.0, 0.7,
+                   f"Transfer amount deviates from baseline (Modified Z={mod_z:.1f})",
+                   modifiedZ=round(mod_z, 2))
+
+    # 4. Transaction Velocity / Rapid Forwarding (0-10 pts)
+    tx_time = _epoch(edge.block_time)
+    incoming_times = [_epoch(e.block_time) for e in all_edges if e.to_address == frm and _epoch(e.block_time) <= tx_time]
+    delay_sec = (tx_time - max(incoming_times)) if incoming_times else 999999.0
+
+    in_val_sum = sum(e.value_usd for e in all_edges if e.to_address == frm)
+    forward_ratio = (val_usd / in_val_sum) if in_val_sum > 0 else 0.0
+
+    if 0 <= delay_sec < 60 and forward_ratio >= 0.85:
+        add_factor("RAPID_PASS_THROUGH", "Rapid pass-through", 10.0, 0.95,
+                   f"{forward_ratio:.1%} of received value forwarded {delay_sec:.0f} seconds after receipt",
+                   delaySeconds=round(delay_sec, 1), forwardedRatio=round(forward_ratio, 3))
+    elif 0 <= delay_sec < 600 and forward_ratio >= 0.70:
+        add_factor("FAST_FORWARDING", "Fast forwarding", 8.0, 0.90,
+                   f"Forwarded {delay_sec / 60.0:.1f} minutes after receipt",
+                   delaySeconds=round(delay_sec, 1))
+    elif 0 <= delay_sec < 3600:
+        add_factor("ELEVATED_VELOCITY", "Elevated transaction velocity", 6.0, 0.80,
+                   f"Forwarded within {delay_sec / 60.0:.0f} minutes",
+                   delaySeconds=round(delay_sec, 1))
+    elif 0 <= delay_sec < 86400:
+        add_factor("SAME_DAY_FORWARDING", "Same-day forwarding", 3.0, 0.70,
+                   f"Forwarded within {delay_sec / 3600.0:.1f} hours",
+                   delaySeconds=round(delay_sec, 1))
+
+    # 5. Graph Topology (0-10 pts)
+    frm_out_count = len({e.to_address for e in all_edges if e.from_address == frm})
+    frm_in_count = len({e.from_address for e in all_edges if e.to_address == frm})
+    to_out_count = len({e.to_address for e in all_edges if e.from_address == to})
+    to_in_count = len({e.from_address for e in all_edges if e.to_address == to})
+
+    if frm_in_count >= 15 and frm_out_count <= 3:
+        add_factor("COLLECTION_FUNNEL", "Collection funnel flow", 10.0, 0.9,
+                   f"Sourced from collection funnel ({frm_in_count} senders -> {frm_out_count} receivers)",
+                   fanIn=frm_in_count, fanOut=frm_out_count)
+    elif frm_out_count >= 25 and frm_in_count <= 3:
+        add_factor("DISTRIBUTION_PATTERN", "Distribution point flow", 8.0, 0.85,
+                   f"Outbound flow from distribution hub ({frm_out_count} recipients)",
+                   fanOut=frm_out_count)
+
+    # 6. Structuring Pattern (0-10 pts)
+    if 8000.0 <= val_usd <= 9999.0:
+        near_struct_count = sum(1 for e in all_edges if 8000.0 <= e.value_usd <= 9999.0 and (e.from_address == frm or e.to_address == to))
+        if near_struct_count >= 5:
+            add_factor("STRUCTURING_HIGH", "Repeated threshold structuring", 10.0, 0.95,
+                       f"Part of {near_struct_count} transfers clustered just below $10k reporting threshold",
+                       nearCount=near_struct_count)
+        elif near_struct_count >= 3:
+            add_factor("STRUCTURING_MODERATE", "Moderate threshold structuring", 7.0, 0.85,
+                       f"Part of {near_struct_count} near-threshold transfers",
+                       nearCount=near_struct_count)
+        else:
+            add_factor("STRUCTURING_LOW", "Near-threshold transfer", 3.0, 0.70,
+                       "Transfer amount sits just below $10k reporting threshold",
+                       nearCount=near_struct_count)
+
+    # 7. Obfuscation / Cross-Chain / Bridge (0-10 pts)
+    bridges_set = set(flags.get("bridges", []))
+    is_bridge_tx = frm in bridges_set or to in bridges_set
+
+    if (frm in mixers_set or to in mixers_set) and delay_sec < 300:
+        add_factor("MIXER_RAPID_FORWARDING", "Mixer rapid forwarding", 10.0, 0.95,
+                   "Rapid movement immediately associated with a mixer endpoint")
+    elif is_bridge_tx and delay_sec < 600:
+        add_factor("BRIDGE_RAPID_FORWARDING", "Bridge rapid forwarding", 6.0, 0.85,
+                   "Rapid cross-chain bridge transition")
+    elif is_bridge_tx:
+        add_factor("BRIDGE_CROSS_CHAIN", "Cross-chain bridge transition", 2.0, 0.80,
+                   "Ordinary cross-chain bridge usage")
+
+    # 8. Historical Intelligence (0-5 pts)
+    hist_hits = history_intel.get("case_hits", 0)
+    if hist_hits > 0:
+        add_factor("HISTORICAL_CASE_HIT", "Historical case intelligence hit", min(5.0, hist_hits * 2.5), 0.9,
+                   f"Counterparty linked to {hist_hits} prior fraud investigation(s)")
+
+    # Calculate final effective score
+    raw_total = sum(f.effective_points for f in factors)
+    final_score = min(100.0, round(raw_total, 2))
+
+    # Direct sanctions override floor for transactions
+    override_applied = False
+    if is_sanction_tx:
+        final_score = max(final_score, 90.0)
+        override_applied = True
+
+    band = tx_risk_band(final_score)
+    avg_conf = (sum(f.confidence for f in factors) / len(factors)) if factors else 0.80
+
+    # Calculate Relevance Score (0-100) independently
+    # Relevance answers: "How important is this transaction to the investigation?"
+    rel_taint = taint_share * 40.0
+    hop_dist = hop_map.get(to, hop_map.get(frm, 1))
+    rel_hop = 35.0 if hop_dist == 1 else (25.0 if hop_dist == 2 else 15.0)
+    rel_target = 20.0 if (frm in target_set or to in target_set) else 0.0
+    rel_vasp = 15.0 if (to in exchanges_set or (wallets_intel.get(f"{chain}:{to}") or {}).get("entity_type") == "exchange") else 0.0
+
+    relevance_score = min(100.0, round(rel_taint + rel_hop + rel_target + rel_vasp, 2))
+
+    return {
+        "tx_hash": edge.tx_hash,
+        "from_address": frm,
+        "to_address": to,
+        "chain": chain,
+        "asset": edge.asset,
+        "amount": edge.value_native,
+        "amount_usd": edge.value_usd,
+        "timestamp": edge.block_time,
+        "risk": {
+            "score": final_score,
+            "band": band,
+            "confidence": round(avg_conf, 2),
+            "override_applied": override_applied,
+            "factors": [f.to_dict() for f in sorted(factors, key=lambda x: -x.effective_points)],
+        },
+        "relevance": {
+            "score": relevance_score,
+            "taint_share": round(taint_share, 4),
+            "fund_attribution_share": round(fund_attribution_share, 4),
+            "hop": hop_dist,
+        },
+        "evidence": evidence_strings,
+        "flags": flag_codes,
+        "engine_version": RISK_ENGINE_VERSION,
+    }
+
+
+# =====================================================================
+# WALLET-LEVEL RISK ENGINE
 # =====================================================================
 def build_stats(edges: list[NormEdge]) -> dict[str, WalletStats]:
     """Aggregate per-wallet statistics from the traced edge list."""
@@ -127,21 +522,7 @@ def build_stats(edges: list[NormEdge]) -> dict[str, WalletStats]:
     return stats
 
 
-def _epoch(iso_ts: str) -> float:
-    try:
-        return datetime.fromisoformat(str(iso_ts).replace("Z", "+00:00")).timestamp()
-    except (ValueError, TypeError):
-        return 0.0
-
-
 def _hops_map(edges: list[NormEdge], seeds: set[str], max_hops: int = 6) -> dict[str, int]:
-    """
-    Multi-source BFS outwards from the flagged addresses.
-
-    Running it backwards from the targets turns N single-source searches into
-    one traversal — O(E) instead of O(N*E), which is what makes it usable on
-    a live graph rather than a toy one.
-    """
     if not seeds:
         return {}
     adj: dict[str, set[str]] = defaultdict(set)
@@ -169,18 +550,6 @@ def _detect_poisoning(
     suffix_len: int = 8,
     min_group: int = 3,
 ) -> dict[str, Any] | None:
-    """
-    Look-alike address detection.
-
-    Generating a vanity address that matches a target's first 6 and last 8
-    characters is cheap; matching the middle is not. So a group of distinct
-    addresses sharing BOTH ends is manufactured, not coincidence — the
-    probability of three independent addresses colliding on 14 hex chars is
-    vanishingly small.
-
-    EVM only: Bitcoin and Tron addresses are base58 with checksums and do
-    not exhibit this pattern the same way.
-    """
     evm = [a for a in counterparties if a.startswith("0x") and len(a) == 42]
     if len(evm) < min_group:
         return None
@@ -205,13 +574,6 @@ def _detect_poisoning(
 
 
 def _peel_depth(edges: list[NormEdge], start: str, max_depth: int = 12) -> int:
-    """
-    Longest chain where each hop forwards 70–98% of what it received.
-
-    Value bleeding off a little at a time is the peel chain — the dominant
-    layering pattern in task-based and investment fraud. Depth is the signal:
-    one hop is ambiguous, eight hops of 90% forwarding is deliberate.
-    """
     out: dict[str, list[NormEdge]] = defaultdict(list)
     for e in edges:
         if e.value_usd > 0:
@@ -220,7 +582,7 @@ def _peel_depth(edges: list[NormEdge], start: str, max_depth: int = 12) -> int:
     best = 0
     stack: list[tuple[str, float, int, frozenset]] = [(start, math.inf, 0, frozenset([start]))]
     seen_states = 0
-    while stack and seen_states < 5000:                # bound the search
+    while stack and seen_states < 5000:
         node, prev_val, depth, path = stack.pop()
         seen_states += 1
         best = max(best, depth)
@@ -234,7 +596,6 @@ def _peel_depth(edges: list[NormEdge], start: str, max_depth: int = 12) -> int:
     return best
 
 
-# =====================================================================
 def score_wallet(
     key: str,
     s: WalletStats,
@@ -245,8 +606,16 @@ def score_wallet(
     darknet_hops: int | None,
     peel_depth: int,
     is_target: bool,
+    tx_scores: list[dict[str, Any]] | None = None,
+    wallets_intel: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
-    """Score one wallet. Returns the score plus every factor that fired."""
+    """
+    Score one wallet. Aggregates behavioral patterns AND transaction-level risk metrics.
+    Enforces deterministic sanctions hard floor with explicit override tracking.
+    """
+    tx_scores = tx_scores or []
+    wallets_intel = wallets_intel or {}
+    intel = wallets_intel.get(key) or wallets_intel.get(s.address) or {}
     factors: list[Factor] = []
 
     def add(code, label, points, detail, **ev):
@@ -288,7 +657,7 @@ def score_wallet(
             f"Sits on a peel chain {peel_depth} hops deep — deliberate layering",
             depth=peel_depth)
 
-    # ---- structuring: transfers clustered just below a threshold -----
+    # ---- structuring -------------------------------------------------
     if s.values:
         near = sum(1 for v in s.values if 8_000 <= v <= 9_999)
         ratio = near / len(s.values)
@@ -313,70 +682,78 @@ def score_wallet(
             fanIn=s.fan_in, fanOut=s.fan_out)
 
     # ---- pass-through (mule) -----------------------------------------
-    if s.in_usd > 100 and 0.90 <= s.pass_through_ratio <= 1.02 \
-            and s.balance_usd < s.in_usd * 0.1:
+    if s.in_usd > 100 and 0.90 <= s.pass_through_ratio <= 1.02 and s.balance_usd < s.in_usd * 0.1:
         add("PASS_THROUGH", "Pass-through wallet", 12,
-            f"Forwarded {s.pass_through_ratio:.0%} of everything received, "
-            "retaining almost nothing — layering mule",
+            f"Forwarded {s.pass_through_ratio:.0%} of everything received, retaining almost nothing — layering mule",
             ratio=round(s.pass_through_ratio, 3))
 
     # ---- burner ------------------------------------------------------
     if 0 < s.active_days < 3 and s.fan_in >= 5 and s.pass_through_ratio > 0.85:
         add("BURNER_SWEEP", "Burner wallet", 12,
-            f"Collected from {s.fan_in} sources and swept out within "
-            f"{s.active_days:.1f} days",
+            f"Collected from {s.fan_in} sources and swept out within {s.active_days:.1f} days",
             activeDays=round(s.active_days, 2))
 
-    # ---- dormant then active ------------------------------------------
+    # ---- dormant burst -----------------------------------------------
     if s.active_days > 90 and s.dormancy_days < 3 and s.tx_count > 5:
         add("DORMANT_BURST", "Dormant-then-burst", 8,
             "Long-dormant wallet suddenly active again — reactivated mule",
             dormancyDays=round(s.dormancy_days, 1))
 
     # ---- address poisoning --------------------------------------------
-    # Found in live data: four senders to one wallet, all sharing the same
-    # crafted 6-char prefix AND 8-char suffix, one of them sending dust.
-    # The attacker generates vanity addresses that look like a real
-    # counterparty, seeds the victim's history, and waits for them to copy
-    # the wrong one from their wallet app. PS 26183's victim scenario
-    # exactly — so the tool should name it rather than leave an officer to
-    # spot four near-identical hex strings by eye.
     poison = _detect_poisoning(s.senders | s.receivers)
     if poison:
         add("ADDRESS_POISONING", "Address-poisoning cluster", 18,
-            f"transacts with {poison['count']} counterparties sharing the "
-            f"crafted pattern {poison['prefix']}…{poison['suffix']} — look-alike "
-            "addresses seeded so the victim copies the wrong one",
+            f"transacts with {poison['count']} counterparties sharing crafted pattern {poison['prefix']}…{poison['suffix']}",
             **poison)
 
     if s.values:
         dust = sum(1 for v in s.values if 0 < v < 0.01)
         if dust and poison:
             add("DUST_SEEDING", "Dust seeding", 6,
-                f"{dust} near-zero transfer(s) alongside look-alike addresses "
-                "— the bait transaction of a poisoning attack",
+                f"{dust} near-zero transfer(s) alongside look-alike addresses",
                 dustTransfers=dust)
 
     # ---- exchange proximity -------------------------------------------
-    # Not itself suspicious — it is the ACTIONABLE part. A direct deposit
-    # means there is a VASP to serve a notice on, which raises priority
-    # without implying the exchange did anything wrong.
+    # Actionable endpoint, NOT intrinsic wickedness
     if exchange_hops == 0 and not is_target:
         add("EXCHANGE_ENDPOINT", "Exchange deposit endpoint", 5,
             "Funds deposit directly into an exchange — freezable endpoint",
             hops=0)
 
+    # ---- Transaction Aggregates Contribution --------------------------
+    tx_risks = [t.get("risk", {}).get("score", 0.0) for t in tx_scores if isinstance(t, dict)]
+    high_tx_count = sum(1 for r in tx_risks if r >= 60.0)
+    crit_tx_count = sum(1 for r in tx_risks if r >= 80.0)
+    mean_tx_risk = (sum(tx_risks) / len(tx_risks)) if tx_risks else 0.0
+    max_tx_risk = max(tx_risks) if tx_risks else 0.0
+
+    if crit_tx_count > 0:
+        add("CRITICAL_TRANSACTIONS_PRESENT", "Critical risk transactions present", min(15.0, crit_tx_count * 5.0),
+            f"Wallet participated in {crit_tx_count} critical-risk transaction(s)",
+            criticalTxCount=crit_tx_count)
+    elif high_tx_count > 0:
+        add("HIGH_RISK_TRANSACTIONS_PRESENT", "High risk transactions present", min(10.0, high_tx_count * 3.0),
+            f"Wallet participated in {high_tx_count} high-risk transaction(s)",
+            highTxCount=high_tx_count)
+
     total = min(100.0, sum(f.points for f in factors))
-    # A direct sanctions hit pins the score. A model or heuristic may raise
-    # an alarm; it is never allowed to talk one down.
+
+    # Direct sanctions hard floor with explicit override tracking
     floor_applied = False
+    floor_reason = None
     if sanction_hops == 0:
         total = max(total, 90.0)
         floor_applied = True
+        floor_reason = "Direct verified sanctions match on wallet address"
 
-    band = ("critical" if total >= BAND_CRITICAL else
-            "high" if total >= BAND_HIGH else
-            "medium" if total >= BAND_MEDIUM else "low")
+    band = wallet_risk_band(total)
+
+    # Calculate Independent VASP Attribution Confidence
+    vasp_attr = calculate_vasp_attribution_confidence(
+        s.address, s.chain, wallets_intel=wallets_intel,
+        explicit_vasp_name=intel.get("vasp_name"),
+        explicit_entity_type=intel.get("entity_type")
+    )
 
     return {
         "address": s.address,
@@ -384,11 +761,20 @@ def score_wallet(
         "risk_score": round(total, 2),
         "risk_band": band,
         "sanction_floor_applied": floor_applied,
+        "sanction_floor_reason": floor_reason,
         "factors": [
             {"code": f.code, "label": f.label, "points": f.points,
              "detail": f.detail, "evidence": f.evidence}
             for f in sorted(factors, key=lambda x: -x.points)
         ],
+        "vasp_attribution": vasp_attr,
+        "transaction_aggregates": {
+            "mean_transaction_risk": round(mean_tx_risk, 2),
+            "max_transaction_risk": round(max_tx_risk, 2),
+            "high_risk_tx_count": high_tx_count,
+            "critical_tx_count": crit_tx_count,
+            "total_scored_txs": len(tx_risks),
+        },
         "hops_to_sanctioned": sanction_hops,
         "hops_to_mixer": mixer_hops,
         "hops_to_exchange": exchange_hops,
@@ -401,17 +787,15 @@ def score_wallet(
             "activeDays": round(s.active_days, 2),
             "dormancyDays": round(s.dormancy_days, 2),
             "assets": sorted(s.assets),
-            # honest signalling: how much of this wallet's activity we could
-            # not price, so nobody reads a low USD figure as low activity
             "unvaluedTransfers": s.unvalued_count,
         },
         "narrative": _narrate(s, factors, total, band),
         "recommended_actions": _recommend(
             band, sanction_hops, mixer_hops, exchange_hops, factors),
+        "engine_version": RISK_ENGINE_VERSION,
     }
 
 
-# =====================================================================
 def _narrate(s: WalletStats, factors: list[Factor], total: float, band: str) -> str:
     if not factors:
         return (f"Assessed at {total:.0f}/100 ({band} risk). No risk factor "
@@ -427,45 +811,30 @@ def _narrate(s: WalletStats, factors: list[Factor], total: float, band: str) -> 
 
 
 def _recommend(band, sanction_hops, mixer_hops, exchange_hops, factors) -> list[str]:
-    """
-    Investigative next steps — an explicit PS 26183 deliverable.
-
-    Phrased as actions for an officer, never as conclusions. The system
-    proposes; a human decides.
-    """
     acts: list[str] = []
     codes = {f.code for f in factors}
 
     if sanction_hops == 0:
-        acts.append("ESCALATE IMMEDIATELY — address is on the OFAC SDN list. "
-                    "Notify FIU-IND and freeze on sight.")
+        acts.append("ESCALATE IMMEDIATELY — address is on the OFAC SDN list. Notify FIU-IND and freeze on sight.")
     elif sanction_hops == 1:
-        acts.append("One hop from a sanctioned address — escalate for "
-                    "supervisory review before contacting the VASP.")
+        acts.append("One hop from a sanctioned address — escalate for supervisory review before contacting the VASP.")
 
     if exchange_hops == 0:
-        acts.append("Funds deposit DIRECTLY into an exchange — issue a Section 91 "
-                    "BNSS notice to that VASP for KYC and freeze the deposit account.")
+        acts.append("Funds deposit DIRECTLY into an exchange — issue a Section 91 BNSS notice to that VASP for KYC and freeze the deposit account.")
     elif exchange_hops is not None and exchange_hops <= 2:
-        acts.append(f"Exchange endpoint reachable in {exchange_hops} hops — trace the "
-                    "intermediate wallets and prepare a VASP notice for the terminal address.")
+        acts.append(f"Exchange endpoint reachable in {exchange_hops} hops — trace intermediate wallets and prepare VASP notice for terminal address.")
     elif exchange_hops is None:
-        acts.append("No exchange endpoint traced yet — increase hop depth or "
-                    "re-run once more of the graph is ingested.")
+        acts.append("No exchange endpoint traced yet — increase hop depth or re-run once more of the graph is ingested.")
 
     if mixer_hops is not None and mixer_hops <= 1:
-        acts.append("Mixer exposure — preserve pre-mixer transaction evidence NOW; "
-                    "post-mixer attribution may be unrecoverable.")
+        acts.append("Mixer exposure — preserve pre-mixer transaction evidence NOW; post-mixer attribution may be unrecoverable.")
 
     if "PEEL_CHAIN" in codes:
-        acts.append("Peel chain detected — map every hop before serving notice, "
-                    "or the downstream wallets will be missed.")
+        acts.append("Peel chain detected — map every hop before serving notice, or downstream wallets will be missed.")
     if "FUNNEL_ACCOUNT" in codes:
-        acts.append("Collection funnel — cross-check the sending addresses against "
-                    "NCRP for other victim complaints in the same campaign.")
+        acts.append("Collection funnel — cross-check sending addresses against NCRP for other victim complaints.")
     if "BURNER_SWEEP" in codes:
-        acts.append("Burner pattern — act quickly; this wallet type is usually "
-                    "abandoned within days.")
+        acts.append("Burner pattern — act quickly; this wallet type is usually abandoned within days.")
 
     if band in ("critical", "high") and not acts:
         acts.append("High composite risk — assign for manual review and add to watchlist.")
@@ -474,7 +843,6 @@ def _recommend(band, sanction_hops, mixer_hops, exchange_hops, factors) -> list[
     return acts
 
 
-# =====================================================================
 def score_graph(
     edges: list[NormEdge],
     targets: list[str],
@@ -483,20 +851,28 @@ def score_graph(
     mixers: set[str] | None = None,
     exchanges: set[str] | None = None,
     darknet: set[str] | None = None,
-) -> dict[str, dict[str, Any]]:
+    wallets_intel: dict[str, dict] | None = None,
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
     """
-    Score every wallet in a traced graph. address -> score dict.
-
-    The always-available path: no database, no ML service, no network.
+    Score every wallet AND every transaction in a traced graph.
+    Returns (scored_wallets_dict, scored_transactions_list).
     """
     if not edges:
-        return {}
+        return {}, []
 
     sanctioned = sanctioned or set()
     mixers = mixers or set()
     exchanges = exchanges or set()
     darknet = darknet or set()
     target_set = set(targets)
+    wallets_intel = wallets_intel or {}
+
+    flags = {
+        "sanctioned": list(sanctioned),
+        "mixers": list(mixers),
+        "exchanges": list(exchanges),
+        "darknet": list(darknet),
+    }
 
     stats = build_stats(edges)
     h_sanction = _hops_map(edges, sanctioned)
@@ -504,10 +880,26 @@ def score_graph(
     h_exchange = _hops_map(edges, exchanges)
     h_darknet = _hops_map(edges, darknet)
 
-    out: dict[str, dict[str, Any]] = {}
+    # 1. Score every transaction first
+    scored_txs: list[dict[str, Any]] = []
+    txs_by_wallet: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    for edge in edges:
+        sc_tx = score_transaction(
+            edge, edges, targets,
+            wallets_intel=wallets_intel,
+            flags=flags,
+            hop_map=h_sanction,
+        )
+        scored_txs.append(sc_tx)
+        txs_by_wallet[edge.from_address].append(sc_tx)
+        txs_by_wallet[edge.to_address].append(sc_tx)
+
+    # 2. Score every wallet, consuming transaction-level risk metrics
+    scored_wallets: dict[str, dict[str, Any]] = {}
     for key, s in stats.items():
         a = s.address
-        out[a] = score_wallet(
+        scored_wallets[a] = score_wallet(
             key, s,
             sanction_hops=h_sanction.get(a),
             mixer_hops=h_mixer.get(a),
@@ -515,45 +907,27 @@ def score_graph(
             darknet_hops=h_darknet.get(a),
             peel_depth=_peel_depth(edges, a),
             is_target=a in target_set,
+            tx_scores=txs_by_wallet.get(a, []),
+            wallets_intel=wallets_intel,
         )
-    return out
+
+    return scored_wallets, scored_txs
 
 
 # =====================================================================
 # ML FEATURE CONTRACT
-#
-# This is the single source of truth for what the model sees. Before this
-# existed there were two definitions — aiml/src/features/schema.py and the
-# stats computed here — which is the classic training/serving skew: the
-# model scores 0.95 offline and produces nonsense in production because the
-# serving path built a column differently.
-#
-# Now the ML trains on EXACTLY what /trace computes, because it trains on
-# /trace's own output. There is nothing to keep in sync.
 # =====================================================================
-
-# Order is part of the contract: a model is a positional array of floats.
-# Append only — never reorder or delete, or an old model silently reads the
-# wrong column. Bump FEATURE_VERSION when you append.
-FEATURE_VERSION = "1.0.0"
+FEATURE_VERSION = "2.0.0"
 
 FEATURE_ORDER: list[str] = [
-    # flow
     "in_usd", "out_usd", "balance_usd", "pass_through_ratio",
     "log_in_usd", "log_out_usd",
-    # shape
     "tx_count", "fan_in", "fan_out", "fan_ratio", "degree",
-    # time
     "active_days", "dormancy_days", "tx_per_day",
-    # proximity (99 = no path found — a real observation, not missing data)
     "sanction_hops", "mixer_hops", "exchange_hops", "darknet_hops",
     "peel_depth",
-    # composition
     "distinct_assets", "unvalued_ratio", "dust_ratio", "round_ratio",
-    "structuring_ratio",
-    # the heuristic verdict itself, as a feature the model may agree or
-    # disagree with — it learns where the rules are wrong
-    "heuristic_score",
+    "structuring_ratio", "heuristic_score",
 ]
 
 NO_PATH = 99.0
@@ -564,10 +938,6 @@ def _log1p(x: float) -> float:
 
 
 def feature_vector(score: dict[str, Any]) -> dict[str, float]:
-    """
-    Turn one wallet's score dict (from score_graph) into a flat numeric
-    feature map. Deterministic, no I/O, no randomness.
-    """
     st = score.get("stats") or {}
     in_usd = float(st.get("inUsd") or 0.0)
     out_usd = float(st.get("outUsd") or 0.0)
@@ -605,8 +975,6 @@ def feature_vector(score: dict[str, Any]) -> dict[str, float]:
         "peel_depth": float(score.get("peel_chain_depth") or 0),
         "distinct_assets": float(len(st.get("assets") or [])),
         "unvalued_ratio": unvalued / max(tx, 1.0),
-        # these three are carried as binary evidence that the rule fired;
-        # the model can learn to weight them differently than the rules do
         "dust_ratio": 1.0 if "DUST_SEEDING" in codes else 0.0,
         "round_ratio": 1.0 if "ADDRESS_POISONING" in codes else 0.0,
         "structuring_ratio": 1.0 if "STRUCTURING" in codes else 0.0,
@@ -615,7 +983,6 @@ def feature_vector(score: dict[str, Any]) -> dict[str, float]:
 
 
 def feature_matrix(scores: dict[str, dict]) -> tuple[list[str], list[list[float]]]:
-    """scores (address -> score dict) -> (addresses, rows) in FEATURE_ORDER."""
     addrs, rows = [], []
     for addr, sc in scores.items():
         fv = feature_vector(sc)

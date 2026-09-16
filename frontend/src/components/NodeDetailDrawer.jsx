@@ -296,6 +296,18 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
             </div>
           )}
 
+          {/* Sanctions Override Banner if applied */}
+          {entity.sanctionFloorApplied && (
+            <div className="border rounded-2xl border-red-500/40 bg-red-950/40 p-4 text-xs">
+              <div className="flex items-center gap-2 font-bold text-red-400 uppercase tracking-wider">
+                <AlertTriangle size={16} /> Sanctions Hard Floor Override Applied
+              </div>
+              <p className="mt-1 text-red-200">
+                {entity.sanctionFloorReason || "Direct OFAC SDN sanctions match enforced a mandatory min 90.0 CRITICAL risk floor."}
+              </p>
+            </div>
+          )}
+
           {/* Key Metrics Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="border rounded-2xl border-white/10 bg-white/[0.04] p-5 shadow-sm">
@@ -309,16 +321,71 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
             </div>
 
             <div className="border rounded-2xl border-white/10 bg-white/[0.04] p-5 shadow-sm">
-              <span className="uppercase tracking-wider text-slate-400 font-semibold text-xs">Risk Assessment</span>
+              <span className="uppercase tracking-wider text-slate-400 font-semibold text-xs">Wallet Risk Assessment</span>
               <div className="mt-2 flex items-center gap-2">
                 <span className="sm:text-2xl font-bold text-amber-400 font-mono">{riskScore}/100</span>
                 <span className="border rounded-full bg-amber-500/15 px-2.5 py-0.5 font-bold text-amber-300 border-amber-500/30 text-xs">
-                  {riskScore >= 90 ? "CRITICAL" : "HIGH"}
+                  {riskScore >= 90 ? "CRITICAL" : riskScore >= 70 ? "HIGH" : riskScore >= 40 ? "MEDIUM" : "LOW"}
                 </span>
               </div>
-              <div className="text-slate-400 mt-1 text-xs">Mule Layering Detected</div>
+              <div className="text-slate-400 mt-1 text-xs">
+                {entity.sanctionFloorApplied ? "Sanctions Floor Overridden" : "Multi-factor Wallet Risk Model"}
+              </div>
             </div>
           </div>
+
+          {/* Decoupled VASP Attribution Panel (Independent of Risk Score) */}
+          {entity.vaspAttribution && (
+            <div className="border rounded-2xl border-purple-500/30 bg-purple-950/30 p-5 shadow-sm space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="uppercase tracking-wider text-purple-300 font-bold text-xs flex items-center gap-1.5">
+                  <Sparkles size={14} className="text-purple-400" /> Decoupled VASP Entity Attribution
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-200 border border-purple-500/40 text-xs font-mono font-bold">
+                  {(Number(entity.vaspAttribution.confidence || 0) * 100).toFixed(0)}% Confidence
+                </span>
+              </div>
+              <div className="text-sm font-bold text-white flex items-center gap-2">
+                <span>{entity.vaspAttribution.name || "Unattributed Exchange"}</span>
+                <span className="text-xs font-normal text-purple-300">({entity.vaspAttribution.entity_type || "VASP"})</span>
+              </div>
+              {entity.vaspAttribution.evidence && entity.vaspAttribution.evidence.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-purple-500/20 text-xs text-purple-200 font-mono">
+                  <div className="text-[10px] text-purple-400 uppercase font-bold mb-1">Attribution Evidence:</div>
+                  <ul className="list-disc pl-4 space-y-0.5">
+                    {entity.vaspAttribution.evidence.map((ev, i) => (
+                      <li key={i}>{ev}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Transaction Risk Aggregates */}
+          {entity.transactionAggregates && entity.transactionAggregates.total_scored_txs > 0 && (
+            <div className="border rounded-2xl border-white/10 bg-white/[0.03] p-4 text-xs space-y-2">
+              <span className="uppercase tracking-wider text-slate-400 font-bold text-[11px] block">
+                Transaction Risk Aggregates ({entity.transactionAggregates.total_scored_txs} Transfers)
+              </span>
+              <div className="grid grid-cols-3 gap-2 font-mono">
+                <div className="border rounded-xl border-white/5 bg-black/40 p-2 text-center">
+                  <span className="text-[10px] text-slate-400 block font-sans">Mean Tx Risk</span>
+                  <span className="text-amber-300 font-bold">{entity.transactionAggregates.mean_transaction_risk}</span>
+                </div>
+                <div className="border rounded-xl border-white/5 bg-black/40 p-2 text-center">
+                  <span className="text-[10px] text-slate-400 block font-sans">Max Tx Risk</span>
+                  <span className="text-red-400 font-bold">{entity.transactionAggregates.max_transaction_risk}</span>
+                </div>
+                <div className="border rounded-xl border-white/5 bg-black/40 p-2 text-center">
+                  <span className="text-[10px] text-slate-400 block font-sans">High/Crit Txs</span>
+                  <span className="text-purple-300 font-bold">
+                    {entity.transactionAggregates.high_risk_tx_count + entity.transactionAggregates.critical_tx_count}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Entity Typology Badge */}
           <div className="border rounded-2xl border-white/10 bg-white/[0.04] p-5 shadow-sm">

@@ -7,6 +7,7 @@ substitutes placeholder edges.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -67,24 +68,24 @@ async def trace(
     persisted = {"wallets": 0, "transactions": 0}
     wallets: dict = {}
     flags: dict = {}
-    if req.persist:
+    if req.persist or req.score:
         try:
-            persisted = await sb.persist_edges(tr.edges)
-            wallets, flags = await sb.entity_flags(chains, all_addrs)
+            ef_res = await sb.entity_flags(chains, all_addrs)
+            if ef_res:
+                wallets, flags = ef_res
         except Exception as e:                              # noqa: BLE001
-            # Persistence is not the deliverable; the graph is. Degrade
-            # rather than denying the officer their trace.
-            log.error("persistence failed: %s", e)
-            tr.errors.append(f"persistence unavailable: {e}")
+            log.error("entity lookup failed: %s", e)
+            tr.errors.append(f"entity lookup unavailable: {e}")
 
     scores: dict = {}
+    scored_txs: list = []
     mode = "none"
     if req.score:
         # ---- always compute the gateway score first ------------------
         # It needs no database and no ML service, so an officer always gets
         # a scored graph. The ML layer refines this when it is reachable;
         # it is not a prerequisite for getting an answer.
-        scores = score_graph(
+        scores, scored_txs = score_graph(
             tr.edges,
             [t.address for t in req.targets],
             sanctioned=set(flags.get("sanctioned", [])),
@@ -129,7 +130,16 @@ async def trace(
             except Exception as e:                          # noqa: BLE001
                 log.error("prediction persistence failed: %s", e)
 
-    graph = build_graph(tr, req.targets, wallets, scores)
+    if req.persist:
+        try:
+            p_res = await sb.persist_edges(tr.edges, scored_txs=scored_txs)
+            if isinstance(p_res, dict):
+                persisted = p_res
+        except Exception as e:                              # noqa: BLE001
+            log.error("persistence failed: %s", e)
+            tr.errors.append(f"persistence unavailable: {e}")
+
+    graph = build_graph(tr, req.targets, wallets, scores, scored_txs=scored_txs)
 
     # Sort edges chronologically descending (newest first) for forensic investigation
     raw_txs = sorted(

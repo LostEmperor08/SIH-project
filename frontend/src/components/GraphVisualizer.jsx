@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Background, Controls, Handle, Position, ReactFlow,
   useEdgesState, useNodesState,
@@ -52,7 +52,7 @@ function buildGraph(graph) {
     target: edge.target,
     type: "smoothstep",
     animated: graph.attribution?.tx_hash === edge.tx_hash,
-    label: `${Number(edge.amount ?? 0).toLocaleString()} ${edge.token ?? "USD"}`,
+    label: `${Number(edge.amount ?? 0).toLocaleString()} ${edge.token ?? "USD"}${edge.risk?.band ? ` [${edge.risk.band}]` : ""}`,
     data: { ...edge },
     style: { 
       stroke: graph.attribution?.tx_hash === edge.tx_hash ? "#d8b84d" : "#2a3654", 

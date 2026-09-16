@@ -136,12 +136,24 @@ def build_graph(
     tr: TraceResult, targets: list[Target],
     wallets: dict[str, dict] | None = None,
     scores: dict[str, dict] | None = None,
+    scored_txs: list[dict[str, Any]] | None = None,
 ) -> dict:
-    """React Flow-ready {nodes, edges}."""
+    """React Flow-ready {nodes, edges} with transaction risk and relevance."""
     wallets = wallets or {}
     scores = scores or {}
+    scored_txs = scored_txs or []
     target_keys = {f"{t.chain}:{t.address}" for t in targets}
     target_addrs = {t.address for t in targets}
+
+    # Index scored transactions by tx_hash or from-to key
+    tx_score_map: dict[str, dict[str, Any]] = {}
+    for stx in scored_txs:
+        h = stx.get("tx_hash")
+        if h:
+            tx_score_map[h] = stx
+        k = f"{stx.get('chain')}:{stx.get('from_address')}->{stx.get('to_address')}"
+        if k not in tx_score_map:
+            tx_score_map[k] = stx
 
     agg: dict[str, dict] = {}
     for e in tr.edges:
@@ -182,29 +194,32 @@ def build_graph(
             if a["from"] == address:
                 out_usd += a["value_usd"]; degree += 1
 
-        vasp = (s.get("vasp_attribution") or {})
+        vasp_attr = s.get("vasp_attribution") or {}
+        vasp_name = w.get("vasp_name") or vasp_attr.get("name")
+        attr_type = vasp_attr.get("entity_type") or vasp_attr.get("type")
         entity = w.get("entity_type") if w.get("entity_type") not in (None, "unknown") \
-            else (vasp.get("type") if vasp and not vasp.get("abstained") else "unknown")
+            else (attr_type if vasp_attr and vasp_attr.get("confidence", 0) >= 0.70 else "unknown")
 
         nodes.append({
             "id": k,
             "type": "target" if is_target else (entity if entity != "unknown" else "wallet"),
             "data": {
                 "address": address, "chain": chain,
-                "label": w.get("vasp_name") or f"{address[:8]}…{address[-4:]}",
+                "label": vasp_name or f"{address[:8]}…{address[-4:]}",
                 "hop": tr.visited.get(k),
                 "isTarget": is_target,
                 "entity": entity or "unknown",
-                "vaspName": w.get("vasp_name"),
+                "vaspName": vasp_name,
+                "vaspAttribution": vasp_attr if vasp_attr else None,
                 "sanctioned": bool(w.get("is_sanctioned")),
                 "riskScore": s.get("risk_score"),
                 "riskBand": s.get("risk_band"),
+                "sanctionFloorApplied": bool(s.get("sanction_floor_applied")),
+                "sanctionFloorReason": s.get("sanction_floor_reason"),
+                "transactionAggregates": s.get("transaction_aggregates", {}),
                 "narrative": s.get("narrative"),
                 "typologies": s.get("typologies", []),
                 "recommendedActions": s.get("recommended_actions", []),
-                # `factors` is the heuristic breakdown every wallet always
-                # has; `explanation` is the model's SHAP view, present only
-                # when the ML service answered.
                 "factors": s.get("factors", []),
                 "explanation": s.get("ml_explanation", s.get("explanation", [])),
                 "illicitProbability": s.get("illicit_probability"),
@@ -222,6 +237,17 @@ def build_graph(
     edges = []
     for i, a in enumerate(agg.values()):
         v = a["value_usd"]
+        first_hash = a["hashes"][0] if a["hashes"] else ""
+        k_edge = f"{a['chain']}:{a['from']}->{a['to']}"
+        tx_info = tx_score_map.get(first_hash) or tx_score_map.get(k_edge) or {}
+
+        tx_risk = tx_info.get("risk", {
+            "score": 0.0, "band": "LOW", "confidence": 0.8, "factors": []
+        })
+        tx_rel = tx_info.get("relevance", {
+            "score": 50.0, "taint_share": 0.0, "hop": 1
+        })
+
         edges.append({
             "id": f"e{i}",
             "source": f"{a['chain']}:{a['from']}",
@@ -232,8 +258,10 @@ def build_graph(
                 "chain": a["chain"], "valueUsd": round(v, 2), "txCount": a["count"],
                 "firstSeen": a["first"], "lastSeen": a["last"],
                 "txHashes": a["hashes"],
-                # every line on the graph is clickable through to the real
-                # block explorer — the detail that makes the data believable
+                "risk": tx_risk,
+                "relevance": tx_rel,
+                "evidence": tx_info.get("evidence", []),
+                "flags": tx_info.get("flags", []),
                 "explorerUrls": [tx_explorer_url(a["chain"], h) for h in a["hashes"]],
             },
         })

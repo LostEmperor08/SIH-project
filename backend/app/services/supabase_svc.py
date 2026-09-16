@@ -51,9 +51,20 @@ class SupabaseService:
     # =================================================================
     # Persistence
     # =================================================================
-    async def persist_edges(self, edges: list[NormEdge]) -> dict[str, int]:
+    async def persist_edges(
+        self, edges: list[NormEdge], scored_txs: list[dict[str, Any]] | None = None,
+    ) -> dict[str, int]:
         if not edges:
             return {"wallets": 0, "transactions": 0}
+
+        tx_score_map: dict[str, dict[str, Any]] = {}
+        for stx in (scored_txs or []):
+            h = stx.get("tx_hash")
+            if h:
+                tx_score_map[h] = stx
+            k = f"{stx.get('chain')}:{stx.get('from_address')}->{stx.get('to_address')}"
+            if k not in tx_score_map:
+                tx_score_map[k] = stx
 
         by_chain: dict[str, list[NormEdge]] = {}
         for e in edges:
@@ -73,10 +84,26 @@ class SupabaseService:
                         log.error("wallet upsert %s: %s", r.status_code, r.text[:300])
                 wallets += len(addrs)
 
-                for batch in _chunk([e.to_row() for e in group], 500):
+                tx_rows = []
+                for e in group:
+                    row = e.to_row()
+                    k = f"{e.chain}:{e.from_address}->{e.to_address}"
+                    sc = tx_score_map.get(e.tx_hash) or tx_score_map.get(k)
+                    if sc:
+                        risk_obj = sc.get("risk", {})
+                        rel_obj = sc.get("relevance", {})
+                        row["risk_score"] = risk_obj.get("score")
+                        row["risk_band"] = risk_obj.get("band")
+                        row["risk_confidence"] = risk_obj.get("confidence")
+                        row["relevance_score"] = rel_obj.get("score")
+                        row["taint_share"] = rel_obj.get("taint_share")
+                        row["risk_factors"] = risk_obj.get("factors", [])
+                    tx_rows.append(row)
+
+                for batch in _chunk(tx_rows, 500):
                     r = await c.post(
                         f"{self._rest}/transactions", headers={
-                            **h, "Prefer": "resolution=ignore-duplicates,return=minimal"},
+                            **h, "Prefer": "resolution=merge-duplicates,return=minimal"},
                         params={"on_conflict":
                                 "chain,tx_hash,vout_index,from_address,to_address"},
                         json=batch)
