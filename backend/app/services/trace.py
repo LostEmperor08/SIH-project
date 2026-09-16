@@ -33,6 +33,16 @@ class TraceResult:
     visited: dict[str, int] = field(default_factory=dict)   # "chain:addr" -> hop
     errors: list[str] = field(default_factory=list)
     prices: dict[str, float] = field(default_factory=dict)
+    # Addresses the providers refused to answer for. These are the reason a
+    # node count can differ between two runs of the SAME trace, so they are
+    # reported rather than quietly dropped: an officer must be able to tell
+    # "this wallet has no counterparties" from "we could not look".
+    dropped: list[str] = field(default_factory=list)
+    upstream: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def complete(self) -> bool:
+        return not self.dropped
 
 
 async def trace_multi_hop(
@@ -72,6 +82,7 @@ async def trace_multi_hop(
                     msg = (str(outcome) if isinstance(outcome, ProviderError)
                            else f"[{chain}] {outcome}")
                     result.errors.append(f"{addr[:14]}… {msg}")
+                    result.dropped.append(f"{chain}:{addr}")
                     log.warning("trace failure %s:%s — %s", chain, addr, outcome)
                     continue
 
@@ -104,6 +115,8 @@ async def trace_multi_hop(
             for k, (c, a) in ranked[: cfg.max_addresses_per_hop]:
                 result.visited[k] = depth + 1
                 frontier.append((c, a))
+
+        result.upstream = dict(http.stats)
 
     return result
 

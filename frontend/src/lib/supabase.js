@@ -238,11 +238,30 @@ function normaliseEvidenceRow(r, i) {
   };
 }
 
-export async function fetchEvidenceRecords() {
+/** Distinct case references present in the ledger, newest chain first. */
+export async function fetchEvidenceCases() {
+  if (!isSupabaseConfigured) return [];
+  const { data, error } = await supabase
+    .from("evidence_ledger").select("case_ref,created_at")
+    .order("created_at", { ascending: false }).limit(1000);
+  if (error) return [];
+  const seen = [];
+  for (const r of data ?? []) {
+    if (r.case_ref && !seen.includes(r.case_ref)) seen.push(r.case_ref);
+  }
+  return seen;
+}
+
+// caseRef scopes the ledger to ONE investigation. Without it the page
+// listed every row the table has ever held, so hops from an unrelated
+// earlier trace appeared under the address you just searched — which is
+// exactly what "transactions of some other people" looked like.
+export async function fetchEvidenceRecords(caseRef) {
   if (isSupabaseConfigured) {
     try {
-      const { data, error } = await supabase
-        .from("evidence_ledger").select("*")
+      let q = supabase.from("evidence_ledger").select("*");
+      if (caseRef) q = q.eq("case_ref", caseRef);
+      const { data, error } = await q
         .order("case_ref", { ascending: false })
         .order("seq", { ascending: true });
       // An empty ledger is a valid state, not a failure. The old

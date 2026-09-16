@@ -6,10 +6,10 @@ import {
   Fingerprint, Layers, Printer, Search, ShieldCheck, Sparkles,
   Shield, Activity, ArrowRight, RefreshCw
 } from "lucide-react";
-import { fetchEvidenceRecords } from "../lib/supabase.js";
+import { fetchEvidenceRecords, fetchEvidenceCases } from "../lib/supabase.js";
 import { NodeDetailDrawer } from "./NodeDetailDrawer.jsx";
 
-export function EvidenceLedgerPage({ onNavigate }) {
+export function EvidenceLedgerPage({ onNavigate, caseRef }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState("ALL");
@@ -17,18 +17,36 @@ export function EvidenceLedgerPage({ onNavigate }) {
   const [selectedEntity, setSelectedEntity] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [cases, setCases] = useState([]);
+  // The ledger is scoped to ONE case. Showing every row the table has ever
+  // held meant hops from an unrelated earlier trace appeared under the
+  // address just searched.
+  const [activeCase, setActiveCase] = useState(caseRef ?? null);
+  const [loadError, setLoadError] = useState(null);
+
+  useEffect(() => {
+    if (caseRef) setActiveCase(caseRef);
+  }, [caseRef]);
 
   useEffect(() => {
     loadRecords();
-  }, []);
+  }, [activeCase]);
 
   async function loadRecords() {
     setLoading(true);
+    setLoadError(null);
     try {
-      const data = await fetchEvidenceRecords();
+      const [data, caseList] = await Promise.all([
+        fetchEvidenceRecords(activeCase || undefined),
+        fetchEvidenceCases(),
+      ]);
       setRecords(data || []);
+      setCases(caseList || []);
+      if (!activeCase && caseList?.length) setActiveCase(caseList[0]);
     } catch (err) {
       console.error("Failed to load evidence records", err);
+      setLoadError(err.message || String(err));
+      setRecords([]);
     } finally {
       setLoading(false);
     }
@@ -188,6 +206,18 @@ export function EvidenceLedgerPage({ onNavigate }) {
             ))}
           </div>
 
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Case:</span>
+            <select
+              value={activeCase ?? ""}
+              onChange={(e) => setActiveCase(e.target.value || null)}
+              className="rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-black/40 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-200 focus:border-[#d8b84d] focus:outline-none"
+            >
+              <option value="">All cases</option>
+              {cases.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+
           <div className="relative w-full sm:w-72">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
             <input
@@ -200,6 +230,12 @@ export function EvidenceLedgerPage({ onNavigate }) {
           </div>
         </div>
       </div>
+
+      {loadError && (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs font-semibold text-amber-300">
+          {loadError}
+        </div>
+      )}
 
       {/* ── Cryptographic Evidence Table or Empty State ── */}
       <div className="glass-panel overflow-hidden rounded-2xl border border-slate-200/90 dark:border-white/10 shadow-2xl">

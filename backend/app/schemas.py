@@ -151,6 +151,14 @@ class TraceStats(BaseModel):
     transactionsPersisted: int = 0
     scored: int = 0
     scoringMode: Literal["heuristic", "ml+heuristic", "rules_only", "none"] = "none"
+    # complete=False means at least one address on the frontier could not be
+    # read, so the graph is a SUBSET of the real one. Reporting it is what
+    # lets a differing node count be explained instead of guessed at.
+    complete: bool = True
+    addressesUnreachable: int = 0
+    upstreamRequests: int = 0
+    upstreamCacheHits: int = 0
+    rateLimitRetries: int = 0
 
 
 class TraceResponse(BaseModel):

@@ -141,6 +141,14 @@ async def trace(
             "walletsPersisted": persisted["wallets"],
             "transactionsPersisted": persisted["transactions"],
             "scored": len(scores), "scoringMode": mode,
+            # A trace is COMPLETE only if every address on the frontier was
+            # answered. When it is not, say so and name the addresses —
+            # that is the difference between a smaller graph and a wrong one.
+            "complete": tr.complete,
+            "addressesUnreachable": len(tr.dropped),
+            "upstreamRequests": tr.upstream.get("requests", 0),
+            "upstreamCacheHits": tr.upstream.get("cache_hits", 0),
+            "rateLimitRetries": tr.upstream.get("rate_limit_retries", 0),
         },
         prices={
             "usd": tr.prices,
