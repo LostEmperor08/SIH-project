@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     # ---- ML service ------------------------------------------------------
     ml_api_url: str | None = None
     ml_api_key: str | None = None
-    ml_timeout_seconds: float = 25.0
+    ml_timeout_seconds: float = 6.0
 
     # ---- threat intel -----------------------------------------------------
     ofac_base_url: str = (

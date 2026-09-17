@@ -276,7 +276,11 @@ class SupabaseService:
             "exchanges": flags.get("exchanges", []),
             "darknet": flags.get("darknet", []),
             "bridges": flags.get("bridges", []),
-            "explain": True,
+            # explain=False skips SHAP computation which adds ~15-20s.
+            # Risk scores, typologies, vasp attribution are still returned.
+            # Heuristic factors from score_graph give the officer traceable
+            # reasons; SHAP adds model internals on top, not instead.
+            "explain": False,
         }
         try:
             async with httpx.AsyncClient(timeout=self.cfg.ml_timeout_seconds) as c:
