@@ -44,6 +44,17 @@ app.add_middleware(
 app.include_router(ml_router)
 
 
+@app.get("/")
+async def root():
+    return {
+        "status": "online",
+        "service": "Chakravyuh SETU AI/ML Model Engine",
+        "docs": "/docs",
+        "health": "/health",
+        "ml_health": "/ml/health",
+    }
+
+
 @app.get("/health")
 async def health():
     return {"ok": True, "service": "chakravyuh-aiml"}
