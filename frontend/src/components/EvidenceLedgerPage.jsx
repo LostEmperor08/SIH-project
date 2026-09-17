@@ -88,10 +88,14 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
         })
       : allTxs;
 
-    // If suspectTxs has matches, use them; otherwise use allTxs so nothing is hidden
-    const targetTxs = suspectTxs.length > 0 ? suspectTxs : allTxs;
+    // Sort strictly chronologically descending (newest transactions first)
+    const sortedTxs = [...(suspectTxs.length > 0 ? suspectTxs : allTxs)].sort((a, b) => {
+      const timeA = new Date(a.block_time || a.timestamp || 0).getTime();
+      const timeB = new Date(b.block_time || b.timestamp || 0).getTime();
+      return timeB - timeA;
+    });
 
-    return targetTxs.map((tx, idx) => {
+    return sortedTxs.map((tx, idx) => {
       const from = cleanAddr(tx.from_address || tx.from_addr || tx.from || tx.source || "");
       const to = cleanAddr(tx.to_address || tx.to_addr || tx.to || tx.target || "");
       const isFromSuspect = Boolean(activeSuspect && from === activeSuspect);
@@ -105,7 +109,17 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
           ? tx.value_native
           : (tx.value_usd || tx.amount || 0)
       );
-      const asset = tx.asset || (tx.token && tx.token !== "USD" ? tx.token : "USDT0");
+      
+      let rawAsset = String(tx.asset || (tx.token && tx.token !== "USD" ? tx.token : "USDT0")).trim();
+      const isSpamToken = Boolean(
+        rawAsset.toUpperCase().includes(".ME") ||
+        rawAsset.toUpperCase().includes("HTTP") ||
+        rawAsset.toUpperCase().includes("SWAP") ||
+        rawAsset.toUpperCase().includes("REWARD") ||
+        rawAsset.toUpperCase().includes("CLAIM") ||
+        rawAsset.toUpperCase().includes("VISIT")
+      );
+      const asset = rawAsset === "USDT0" ? "USDT0" : (rawAsset.length > 18 ? `${rawAsset.slice(0, 15)}...` : rawAsset);
       const when = tx.block_time || tx.timestamp || tx.observed_at || null;
 
       const counterpartyLabel = isFromSuspect
@@ -115,9 +129,15 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
       const counterpartyAddr = isFromSuspect ? to : (isToSuspect ? from : to);
       const originAddr = isFromSuspect ? from : (isToSuspect ? from : from);
 
-      const inr = Math.round(
-        Number(tx.value_usd != null && tx.value_usd > 0 ? tx.value_usd : (numVal > 0 ? numVal : 0)) * USD_INR
-      );
+      const isKnownStable = ["USDT", "USDC", "DAI", "BUSD", "USDT0"].some(s => rawAsset.toUpperCase().includes(s));
+      let usdVal = 0;
+      if (tx.value_usd != null && Number(tx.value_usd) > 0) {
+        usdVal = Number(tx.value_usd);
+      } else if (isKnownStable && numVal > 0) {
+        usdVal = numVal;
+      }
+
+      const inr = Math.round(usdVal * USD_INR);
 
       let istDate = "16/9/2026, 11:48:22 am";
       if (when) {
@@ -152,9 +172,10 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
         counterparty_label: counterpartyLabel,
         counterparty_addr: counterpartyAddr,
         value_native: numVal,
-        value_usdt: numVal,
+        value_usdt: usdVal,
         value_inr: inr,
         asset: asset,
+        isSpamToken: isSpamToken,
         datetime_utc: when ? new Date(when).toISOString().replace("T", " ").slice(0, 19) : "",
         datetime_ist: istDate,
         classification: isToVasp ? "VASP ATTRIBUTION" : isFromSuspect ? "OUTWARD SWEEP" : "INBOUND DEPOSIT",
@@ -527,12 +548,25 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
 
                       {/* VALUE */}
                       <td className="py-4 px-4 sm:px-6 whitespace-nowrap">
-                        <div className="font-bold text-slate-100 font-mono text-xs sm:text-sm">
-                          {Number(r.value_usdt || 0).toFixed(2)} {r.asset || "USDT0"}
-                        </div>
-                        <div className="text-[11px] font-semibold text-emerald-400 font-mono mt-0.5">
-                          ₹{Number(r.value_inr || 0).toLocaleString()} INR
-                        </div>
+                        {r.value_usdt > 0 ? (
+                          <>
+                            <div className="font-bold text-slate-100 font-mono text-xs sm:text-sm">
+                              {Number(r.value_native || r.value_usdt || 0).toFixed(2)} {r.asset || "USDT0"}
+                            </div>
+                            <div className="text-[11px] font-semibold text-emerald-400 font-mono mt-0.5">
+                              ₹{Number(r.value_inr || 0).toLocaleString()} INR
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="font-semibold text-slate-400 font-mono text-xs">
+                              {Number(r.value_native || 0) > 1000 ? Number(r.value_native || 0).toLocaleString() : Number(r.value_native || 0).toFixed(2)} {r.asset || "TOKEN"}
+                            </div>
+                            <div className="text-[10px] font-medium text-slate-500 font-mono mt-0.5">
+                              Unvalued / Airdrop
+                            </div>
+                          </>
+                        )}
                       </td>
 
                       {/* CLASSIFICATION */}

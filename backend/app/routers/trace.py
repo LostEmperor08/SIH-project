@@ -7,6 +7,7 @@ substitutes placeholder edges.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -67,67 +68,83 @@ async def trace(
     persisted = {"wallets": 0, "transactions": 0}
     wallets: dict = {}
     flags: dict = {}
-    if req.persist:
-        try:
-            persisted = await sb.persist_edges(tr.edges)
-            wallets, flags = await sb.entity_flags(chains, all_addrs)
-        except Exception as e:                              # noqa: BLE001
-            # Persistence is not the deliverable; the graph is. Degrade
-            # rather than denying the officer their trace.
-            log.error("persistence failed: %s", e)
-            tr.errors.append(f"persistence unavailable: {e}")
 
     scores: dict = {}
     mode = "none"
-    if req.score:
-        # ---- always compute the gateway score first ------------------
-        # It needs no database and no ML service, so an officer always gets
-        # a scored graph. The ML layer refines this when it is reachable;
-        # it is not a prerequisite for getting an answer.
-        scores = score_graph(
-            tr.edges,
-            [t.address for t in req.targets],
-            sanctioned=set(flags.get("sanctioned", [])),
-            mixers=set(flags.get("mixers", [])),
-            exchanges=set(flags.get("exchanges", [])),
-            darknet=set(flags.get("darknet", [])),
-        )
-        mode = "heuristic"
 
-        # ---- then let the ML layer refine it, if available ------------
+    if req.score or req.persist:
         primary = req.targets[0].chain
-        try:
-            ml = await sb.score_with_ml(
-                primary, all_addrs,
-                [e for e in tr.edges if e.chain == primary], flags or {})
-        except Exception as e:                              # noqa: BLE001
-            log.error("ML scoring failed: %s", e)
-            ml = None
 
-        if ml:
-            mode = "ml+heuristic"
-            for addr, ml_row in ml.items():
-                base = scores.get(addr, {})
-                # Keep the heuristic factors — they are what an officer can
-                # verify by hand — and merge the model's view alongside.
-                base.update({
-                    "risk_score": ml_row.get("risk_score", base.get("risk_score")),
-                    "risk_band": ml_row.get("risk_band", base.get("risk_band")),
-                    "illicit_probability": ml_row.get("illicit_probability"),
-                    "anomaly_score": ml_row.get("anomaly_score"),
-                    "typologies": ml_row.get("typologies", []),
-                    "vasp_attribution": ml_row.get("vasp_attribution"),
-                    "ml_explanation": ml_row.get("explanation", []),
-                })
-                # The sanctions floor outranks the model, always.
-                if base.get("sanction_floor_applied"):
-                    base["risk_score"] = max(base.get("risk_score") or 0, 90.0)
-                    base["risk_band"] = "critical"
-                scores[addr] = base
+        # ---- persistence and ML scoring run concurrently ----------------
+        # Both are network-bound (Supabase RPC + local ML service). Running
+        # them sequentially added the ML wait on top of the DB wait — that is
+        # the source of the 25-second latency. asyncio.gather fires both and
+        # waits for whichever finishes last, which is ALWAYS faster.
+        async def _persist() -> tuple[dict, dict, dict]:
+            if not req.persist:
+                return {}, {}, {}
             try:
-                await sb.save_predictions(primary, scores)
-            except Exception as e:                          # noqa: BLE001
-                log.error("prediction persistence failed: %s", e)
+                p = await sb.persist_edges(tr.edges)
+                w, f = await sb.entity_flags(chains, all_addrs)
+                return p, w, f
+            except Exception as exc:                        # noqa: BLE001
+                log.error("persistence failed: %s", exc)
+                tr.errors.append(f"persistence unavailable: {exc}")
+                return {"wallets": 0, "transactions": 0}, {}, {}
+
+        async def _ml_score() -> dict | None:
+            if not req.score or not cfg.ml_api_url:
+                return None
+            try:
+                return await sb.score_with_ml(
+                    primary, all_addrs,
+                    [e for e in tr.edges if e.chain == primary], {})
+            except Exception as exc:                        # noqa: BLE001
+                log.error("ML scoring failed: %s", exc)
+                return None
+
+        (persist_result, ml_result) = await asyncio.gather(
+            _persist(), _ml_score()
+        )
+
+        persisted, wallets, flags = persist_result
+        ml = ml_result
+
+        if req.score:
+            # ---- gateway heuristic score (no network, no model needed) --
+            scores = score_graph(
+                tr.edges,
+                [t.address for t in req.targets],
+                sanctioned=set(flags.get("sanctioned", [])),
+                mixers=set(flags.get("mixers", [])),
+                exchanges=set(flags.get("exchanges", [])),
+                darknet=set(flags.get("darknet", [])),
+            )
+            mode = "heuristic"
+
+            # ---- merge ML results over the heuristic baseline ------------
+            if ml:
+                mode = "ml+heuristic"
+                for addr, ml_row in ml.items():
+                    base = scores.get(addr, {})
+                    base.update({
+                        "risk_score": ml_row.get("risk_score", base.get("risk_score")),
+                        "risk_band": ml_row.get("risk_band", base.get("risk_band")),
+                        "illicit_probability": ml_row.get("illicit_probability"),
+                        "anomaly_score": ml_row.get("anomaly_score"),
+                        "typologies": ml_row.get("typologies", []),
+                        "vasp_attribution": ml_row.get("vasp_attribution"),
+                        "ml_explanation": ml_row.get("explanation", []),
+                    })
+                    # Sanctions floor outranks the model, always.
+                    if base.get("sanction_floor_applied"):
+                        base["risk_score"] = max(base.get("risk_score") or 0, 90.0)
+                        base["risk_band"] = "critical"
+                    scores[addr] = base
+                try:
+                    await sb.save_predictions(primary, scores)
+                except Exception as e:                      # noqa: BLE001
+                    log.error("prediction persistence failed: %s", e)
 
     graph = build_graph(tr, req.targets, wallets, scores)
 
