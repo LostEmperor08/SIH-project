@@ -49,7 +49,13 @@ export function NodeDetailDrawer({ entity, onClose, onWatchlistUpdated, onDossie
   const entityType = entity.type || entity.classification || (isTransaction ? "ON-CHAIN TRANSFER" : "INTERMEDIARY");
   const balance = entity.value_usdt != null ? entity.value_usdt : (entity.amount != null ? entity.amount : (entity.balance != null ? entity.balance : 0));
   const inrValue = entity.value_inr || Math.round(Number(balance) * 88.5);
-  const riskScore = entity.risk_score || entity.risk || (entityType === "SUSPECT" ? 95 : entityType === "VASP" ? 99 : 75);
+  const riskScore = entity.riskScore != null 
+    ? Math.round(Number(entity.riskScore))
+    : (entity.risk != null 
+        ? Math.round(Number(entity.risk))
+        : (entity.risk_score != null 
+            ? Math.round(Number(entity.risk_score))
+            : (entityType === "SUSPECT" ? 95 : entityType === "VASP" ? 99 : 35)));
   const chainName = entity.chain || "Polygon PoS";
   const firstSeen = entity.datetime_ist || (entity.timestamp ? new Date(entity.timestamp).toLocaleString("en-IN") : new Date().toLocaleString("en-IN"));
   const txHash = entity.tx_hash || (entity.txHashes && entity.txHashes[0]) || "";
@@ -301,7 +307,7 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
             <div className="border rounded-2xl border-white/10 bg-white/[0.04] p-5 shadow-sm">
               <span className="uppercase tracking-wider text-slate-400 font-semibold text-xs">Traced Value</span>
               <div className="mt-2 sm:text-2xl font-bold text-white font-mono">
-                {Number(balance).toLocaleString()} USDT
+                {Number(balance).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
               </div>
               <div className="font-semibold text-emerald-400 mt-1 text-xs sm:text-sm">
                 ≈ ₹{inrValue.toLocaleString()} INR
@@ -311,12 +317,20 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
             <div className="border rounded-2xl border-white/10 bg-white/[0.04] p-5 shadow-sm">
               <span className="uppercase tracking-wider text-slate-400 font-semibold text-xs">Risk Assessment</span>
               <div className="mt-2 flex items-center gap-2">
-                <span className="sm:text-2xl font-bold text-amber-400 font-mono">{riskScore}/100</span>
-                <span className="border rounded-full bg-amber-500/15 px-2.5 py-0.5 font-bold text-amber-300 border-amber-500/30 text-xs">
-                  {riskScore >= 90 ? "CRITICAL" : "HIGH"}
+                <span className="sm:text-2xl font-bold font-mono text-white">{riskScore}/100</span>
+                <span className={`border rounded-full px-2.5 py-0.5 font-bold text-xs ${
+                  riskScore >= 80 
+                    ? "bg-red-500/15 text-red-300 border-red-500/30" 
+                    : riskScore >= 50
+                    ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                    : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                }`}>
+                  {riskScore >= 80 ? "CRITICAL" : riskScore >= 50 ? "HIGH" : "LOW"}
                 </span>
               </div>
-              <div className="text-slate-400 mt-1 text-xs">Mule Layering Detected</div>
+              <div className="text-slate-400 mt-1 text-xs">
+                {entity.riskBand ? `${entity.riskBand.toUpperCase()} Risk Band` : (riskScore >= 80 ? "Critical Layering Mule" : "Forensic Attribution Trail")}
+              </div>
             </div>
           </div>
 
@@ -327,15 +341,23 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
               <span className="border inline-flex items-center gap-1.5 rounded-xl border-[rgba(216,184,77,0.4)] bg-[rgba(216,184,77,0.15)] px-3 py-1.5 font-semibold text-[#d8b84d] text-xs">
                 <ShieldAlert size={14} /> {entityType}
               </span>
-              <span className="border inline-flex items-center gap-1.5 rounded-xl border-cyan-500/30 bg-cyan-950/50 px-3 py-1.5 text-cyan-300 font-mono text-xs">
-                <Layers size={14} /> Peel Chain Pattern
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-xl border-purple-500/30 bg-purple-950/50 px-3 py-1.5 text-purple-300 text-xs">
-                <Zap size={14} /> Instant Sweep
-              </span>
+              {entity.peelDepth ? (
+                <span className="border inline-flex items-center gap-1.5 rounded-xl border-cyan-500/30 bg-cyan-950/50 px-3 py-1.5 text-cyan-300 font-mono text-xs">
+                  <Layers size={14} /> Peel Depth {entity.peelDepth}
+                </span>
+              ) : null}
+              {entity.hopsToExchange != null ? (
+                <span className="inline-flex items-center gap-1.5 rounded-xl border-purple-500/30 bg-purple-950/50 px-3 py-1.5 text-purple-300 text-xs">
+                  <Zap size={14} /> {entity.hopsToExchange} Hops to VASP
+                </span>
+              ) : null}
             </div>
             <p className="mt-3 leading-relaxed text-slate-300 text-xs">
-              {entity.audit_notes || "Continuous on-chain graph analysis classifies this transfer as an automated layering mule movement utilized for aggregating victim funds before multi-hop VASP deposit."}
+              {entity.narrative || entity.audit_notes || (
+                entity.factors?.length
+                  ? entity.factors.map(f => f.detail || f.label).join(" · ")
+                  : "Continuous on-chain topological flow evaluated against Section 65B forensic heuristics."
+              )}
             </p>
           </div>
 
