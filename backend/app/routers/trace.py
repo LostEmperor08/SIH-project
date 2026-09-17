@@ -67,8 +67,13 @@ async def trace(
 
     persisted = {"wallets": 0, "transactions": 0}
     wallets: dict = {}
+    flags: dict = {}
     vasp_intel: dict = {}
     bridge_intel: dict = {}
+    src_b_events: list = []
+    dst_b_events: list = []
+    cross_transfers: list = []
+
     if req.persist or req.score:
         try:
             ef_res = await sb.entity_flags(chains, all_addrs)
@@ -80,17 +85,19 @@ async def trace(
             log.error("entity/vasp/bridge lookup failed: %s", e)
             tr.errors.append(f"entity lookup unavailable: {e}")
 
-    # Cross-Chain Bridge Event Extraction & Correlation Engine (Batch 3)
     from ..services.bridge_correlation import (
         extract_bridge_events, correlate_cross_chain_transfers, propagate_cross_chain_attribution
     )
     src_b_events, dst_b_events = extract_bridge_events(tr.edges, bridge_intel)
     cross_transfers = correlate_cross_chain_transfers(src_b_events, dst_b_events)
-    cross_transfers = propagate_cross_chain_attribution(tr.edges, [t.address for t in req.targets], cross_transfers)
+    cross_transfers = propagate_cross_chain_attribution(
+        tr.edges, [t.address for t in req.targets], cross_transfers
+    )
 
     scores: dict = {}
     scored_txs: list = []
     mode = "none"
+
     if req.score:
         combined_intel = {**wallets, **vasp_intel, **bridge_intel}
         scores, scored_txs = score_graph(
@@ -104,15 +111,37 @@ async def trace(
         )
         mode = "heuristic"
 
-        primary = req.targets[0].chain
+    # ---- persistence and ML scoring run concurrently ----------------
+    async def _persist() -> tuple[dict, dict, dict]:
+        if not req.persist:
+            return {"wallets": 0, "transactions": 0}, {}, {}
         try:
-            ml = await sb.score_with_ml(
-                primary, all_addrs,
-                [e for e in tr.edges if e.chain == primary], flags or {})
-        except Exception as e:                              # noqa: BLE001
-            log.error("ML scoring failed: %s", e)
-            ml = None
+            p = await sb.persist_edges(tr.edges)
+            w, f = await sb.entity_flags(chains, all_addrs)
+            return p, w, f
+        except Exception as exc:                        # noqa: BLE001
+            log.error("persistence failed: %s", exc)
+            tr.errors.append(f"persistence unavailable: {exc}")
+            return {"wallets": 0, "transactions": 0}, {}, {}
 
+    async def _ml_score() -> dict | None:
+        if not req.score or not cfg.ml_api_url:
+            return None
+        try:
+            return await sb.score_with_ml(
+                [t.address for t in req.targets],
+                [e for e in tr.edges if e.chain == [t.chain for t in req.targets][0]],
+                {},
+            )
+        except Exception as exc:                        # noqa: BLE001
+            log.error("ML scoring failed: %s", exc)
+            return None
+
+    (persist_result, ml_result) = await asyncio.gather(_persist(), _ml_score())
+    persisted, wallets, flags = persist_result
+    ml = ml_result
+
+    if req.score:
         if ml:
             mode = "ml+heuristic"
             for addr, ml_row in ml.items():
@@ -130,10 +159,10 @@ async def trace(
                     base["risk_score"] = max(base.get("risk_score") or 0, 90.0)
                     base["risk_band"] = "critical"
                 scores[addr] = base
-            try:
-                await sb.save_predictions(primary, scores)
-            except Exception as e:                          # noqa: BLE001
-                log.error("prediction persistence failed: %s", e)
+        try:
+            await sb.save_predictions([t.chain for t in req.targets][0], scores)
+        except Exception as e:                      # noqa: BLE001
+            log.error("prediction persistence failed: %s", e)
 
     if req.persist:
         try:

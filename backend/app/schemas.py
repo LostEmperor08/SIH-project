@@ -13,7 +13,7 @@ import re
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Chain = Literal["btc", "eth", "polygon", "tron", "bsc"]
 
@@ -86,6 +86,8 @@ class DossierReviewRequest(BaseModel):
 # Responses
 # =====================================================================
 class GraphNodeData(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     address: str
     chain: str
     label: str
@@ -107,10 +109,11 @@ class GraphNodeData(BaseModel):
     mlFeatureVersion: str | None = None
     transactionAggregates: dict[str, Any] = {}
     narrative: str | None = None
-    typologies: list[dict[str, Any]] = []
+    typologies: list[Any] = []
     recommendedActions: list[str] = []
-    factors: list[dict[str, Any]] = []
-    explanation: list[dict[str, Any]] = []
+    factors: list[Any] = []
+    explanation: list[Any] = []
+    evidence: list[Any] = []
     illicitProbability: float | None = None
     anomalyScore: float | None = None
     peelDepth: int | None = None
@@ -124,12 +127,16 @@ class GraphNodeData(BaseModel):
 
 
 class GraphNode(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     id: str
     type: str = "wallet"
     data: GraphNodeData
 
 
 class GraphEdgeData(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     chain: str
     valueUsd: float
     txCount: int
@@ -146,6 +153,8 @@ class GraphEdgeData(BaseModel):
 
 
 class GraphEdge(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     id: str
     source: str
     target: str

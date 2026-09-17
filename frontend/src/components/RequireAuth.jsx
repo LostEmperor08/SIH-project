@@ -31,7 +31,7 @@ export default function RequireAuth({ children, requireAdmin = false }) {
 
   if (!state.checked) {
     return (
-      <div className="grid min-h-[60vh] place-items-center">
+      <div className="workspace-shell grid min-h-[100dvh] place-items-center">
         <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Verifying officer clearance…</span>
       </div>
     );

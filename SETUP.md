@@ -176,7 +176,7 @@ The ML layer runs as its own process on a different port:
 ```bash
 cd aiml
 pip install -r requirements.txt
-uvicorn serving.ml_router:app --port 8001
+python -m uvicorn serving.app:app --port 8001
 ```
 
 Then in `backend/.env`:
@@ -252,7 +252,7 @@ Never put `SUPABASE_SERVICE_ROLE_KEY` in the frontend. Vite inlines every
 cd backend && pip install -r requirements.txt && uvicorn main:app --reload --port 8000
 
 # terminal 2 — ML (optional)
-cd aiml && uvicorn serving.ml_router:app --port 8001
+cd aiml && python -m uvicorn serving.app:app --port 8001
 
 # terminal 3 — frontend
 cd frontend && npm install && npm run dev

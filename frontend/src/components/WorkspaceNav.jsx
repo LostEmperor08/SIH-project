@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Activity, ArrowLeft, ArrowRight, Bell, BookOpen, ChevronDown, Clock3, Command, Home, 
-  ExternalLink, FileText, Layers, LogOut, Menu, Moon, Palette, Search, Settings, 
+  ExternalLink, FileText, LogOut, Menu, Moon, Palette, Search, Settings, 
   Shield, ShieldCheck, Sparkles, Sun, User, Wifi, X, Zap 
 } from "lucide-react";
 import { CommandPaletteModal } from "./CommandPaletteModal.jsx";
@@ -12,7 +12,6 @@ import { getMyProfile, signOutOfficer } from "../lib/auth.js";
 
 const workspaceLinks = [
   { id: "landing", label: "Home", icon: Home },
-  { id: "cases", label: "Case Workspace", icon: Layers },
   { id: "workspace", label: "Money Trail", icon: Activity },
   { id: "watchlist", label: "Watchlist", icon: Shield },
   { id: "dossier", label: "Section 91 Notice", icon: FileText },

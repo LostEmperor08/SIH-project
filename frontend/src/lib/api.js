@@ -94,8 +94,8 @@ export async function traceFunds(req) {
       headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify({
         targets: [{ chain, address: String(req.address ?? "").trim() }],
-        hops: req.hops ?? 2,
-        cap_per_address: req.cap ?? 50,
+        hops: req.hops ?? 1,
+        cap_per_address: req.cap ?? 25,
         score: true,
         persist: true,
       }),
