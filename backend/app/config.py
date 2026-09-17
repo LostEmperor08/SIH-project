@@ -20,7 +20,9 @@ ALLOWED_CHAINS: set[str] = {"btc", "eth", "polygon", "tron", "bsc"}
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=(".env", "backend/.env", "../.env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     # ---- identity -----------------------------------------------------

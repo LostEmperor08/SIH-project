@@ -89,9 +89,17 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
       : allTxs;
 
     // If suspectTxs has matches, use them; otherwise use allTxs so nothing is hidden
-    const targetTxs = suspectTxs.length > 0 ? suspectTxs : allTxs;
+    const sortedTxs = [...(suspectTxs.length > 0 ? suspectTxs : allTxs)].sort((a, b) => {
+      // Prioritize value > 0 then timestamp
+      const valA = Number(a.value_usd || a.value_native || a.amount || 0);
+      const valB = Number(b.value_usd || b.value_native || b.amount || 0);
+      if (Math.abs(valB - valA) > 0.01) return valB - valA;
+      const timeA = new Date(a.block_time || a.timestamp || 0).getTime();
+      const timeB = new Date(b.block_time || b.timestamp || 0).getTime();
+      return timeB - timeA;
+    });
 
-    return targetTxs.map((tx, idx) => {
+    return sortedTxs.map((tx, idx) => {
       const from = cleanAddr(tx.from_address || tx.from_addr || tx.from || tx.source || "");
       const to = cleanAddr(tx.to_address || tx.to_addr || tx.to || tx.target || "");
       const isFromSuspect = Boolean(activeSuspect && from === activeSuspect);
@@ -105,7 +113,9 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
           ? tx.value_native
           : (tx.value_usd || tx.amount || 0)
       );
-      const asset = tx.asset || (tx.token && tx.token !== "USD" ? tx.token : "USDT0");
+      
+      let rawAsset = tx.asset || (tx.token && tx.token !== "USD" ? tx.token : "USDT");
+      const asset = rawAsset === "USDT0" ? "USDT (Polygon)" : rawAsset;
       const when = tx.block_time || tx.timestamp || tx.observed_at || null;
 
       const counterpartyLabel = isFromSuspect
@@ -115,9 +125,8 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
       const counterpartyAddr = isFromSuspect ? to : (isToSuspect ? from : to);
       const originAddr = isFromSuspect ? from : (isToSuspect ? from : from);
 
-      const inr = Math.round(
-        Number(tx.value_usd != null && tx.value_usd > 0 ? tx.value_usd : (numVal > 0 ? numVal : 0)) * USD_INR
-      );
+      const usdVal = Number(tx.value_usd != null && tx.value_usd > 0 ? tx.value_usd : (numVal > 0 ? numVal : 0));
+      const inr = Math.round(usdVal * USD_INR);
 
       let istDate = "16/9/2026, 11:48:22 am";
       if (when) {
@@ -152,7 +161,7 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
         counterparty_label: counterpartyLabel,
         counterparty_addr: counterpartyAddr,
         value_native: numVal,
-        value_usdt: numVal,
+        value_usdt: usdVal,
         value_inr: inr,
         asset: asset,
         datetime_utc: when ? new Date(when).toISOString().replace("T", " ").slice(0, 19) : "",
