@@ -67,24 +67,32 @@ async def trace(
 
     persisted = {"wallets": 0, "transactions": 0}
     wallets: dict = {}
-    flags: dict = {}
+    vasp_intel: dict = {}
+    bridge_intel: dict = {}
     if req.persist or req.score:
         try:
             ef_res = await sb.entity_flags(chains, all_addrs)
             if ef_res:
                 wallets, flags = ef_res
+            vasp_intel = await sb.batch_lookup_vasp_intelligence(chains, all_addrs)
+            bridge_intel = await sb.batch_lookup_bridge_intelligence(chains, all_addrs)
         except Exception as e:                              # noqa: BLE001
-            log.error("entity lookup failed: %s", e)
+            log.error("entity/vasp/bridge lookup failed: %s", e)
             tr.errors.append(f"entity lookup unavailable: {e}")
+
+    # Cross-Chain Bridge Event Extraction & Correlation Engine (Batch 3)
+    from ..services.bridge_correlation import (
+        extract_bridge_events, correlate_cross_chain_transfers, propagate_cross_chain_attribution
+    )
+    src_b_events, dst_b_events = extract_bridge_events(tr.edges, bridge_intel)
+    cross_transfers = correlate_cross_chain_transfers(src_b_events, dst_b_events)
+    cross_transfers = propagate_cross_chain_attribution(tr.edges, [t.address for t in req.targets], cross_transfers)
 
     scores: dict = {}
     scored_txs: list = []
     mode = "none"
     if req.score:
-        # ---- always compute the gateway score first ------------------
-        # It needs no database and no ML service, so an officer always gets
-        # a scored graph. The ML layer refines this when it is reachable;
-        # it is not a prerequisite for getting an answer.
+        combined_intel = {**wallets, **vasp_intel, **bridge_intel}
         scores, scored_txs = score_graph(
             tr.edges,
             [t.address for t in req.targets],
@@ -92,10 +100,10 @@ async def trace(
             mixers=set(flags.get("mixers", [])),
             exchanges=set(flags.get("exchanges", [])),
             darknet=set(flags.get("darknet", [])),
+            wallets_intel=combined_intel,
         )
         mode = "heuristic"
 
-        # ---- then let the ML layer refine it, if available ------------
         primary = req.targets[0].chain
         try:
             ml = await sb.score_with_ml(
@@ -109,18 +117,15 @@ async def trace(
             mode = "ml+heuristic"
             for addr, ml_row in ml.items():
                 base = scores.get(addr, {})
-                # Keep the heuristic factors — they are what an officer can
-                # verify by hand — and merge the model's view alongside.
                 base.update({
                     "risk_score": ml_row.get("risk_score", base.get("risk_score")),
                     "risk_band": ml_row.get("risk_band", base.get("risk_band")),
                     "illicit_probability": ml_row.get("illicit_probability"),
                     "anomaly_score": ml_row.get("anomaly_score"),
                     "typologies": ml_row.get("typologies", []),
-                    "vasp_attribution": ml_row.get("vasp_attribution"),
+                    "vasp_attribution": ml_row.get("vasp_attribution") or base.get("vasp_attribution"),
                     "ml_explanation": ml_row.get("explanation", []),
                 })
-                # The sanctions floor outranks the model, always.
                 if base.get("sanction_floor_applied"):
                     base["risk_score"] = max(base.get("risk_score") or 0, 90.0)
                     base["risk_band"] = "critical"
@@ -135,11 +140,34 @@ async def trace(
             p_res = await sb.persist_edges(tr.edges, scored_txs=scored_txs)
             if isinstance(p_res, dict):
                 persisted = p_res
+            if cross_transfers:
+                await sb.persist_cross_chain_transfers(cross_transfers)
         except Exception as e:                              # noqa: BLE001
             log.error("persistence failed: %s", e)
             tr.errors.append(f"persistence unavailable: {e}")
 
     graph = build_graph(tr, req.targets, wallets, scores, scored_txs=scored_txs)
+
+    # Resolve nearest exchange for TraceResponse top-level attribution summary
+    from ..services.vasp_intelligence import resolve_nearest_exchange, VaspAttribution
+    vasp_map = {}
+    for addr, sc in scores.items():
+        va = sc.get("vasp_attribution")
+        if isinstance(va, dict) and va.get("identified"):
+            vasp_map[addr] = VaspAttribution(
+                identified=True,
+                vasp_id=va.get("vasp_id"),
+                vasp_name=va.get("vasp_name") or va.get("name"),
+                chain=sc.get("chain"),
+                address=addr,
+                wallet_type=va.get("wallet_type") or va.get("walletType") or "DEPOSIT",
+                confidence=va.get("confidence", 0.85),
+                cluster_id=va.get("cluster_id") or va.get("clusterId"),
+                evidence=va.get("evidence", []),
+            )
+
+    wallet_attrs = {addr: sc.get("fund_attribution", {}) for addr, sc in scores.items()}
+    nearest_ex = resolve_nearest_exchange([t.address for t in req.targets], tr.edges, vasp_map, wallet_attrs)
 
     # Sort edges chronologically descending (newest first) for forensic investigation
     raw_txs = sorted(
@@ -147,6 +175,14 @@ async def trace(
         key=lambda r: str(r.get("block_time") or ""),
         reverse=True,
     )
+
+    formatted_cross_transfers = [t.to_dict() for t in cross_transfers]
+    cross_chain_summary = {
+        "supported": True,
+        "correlationsFound": len(cross_transfers),
+        "unconfirmedCandidates": max(0, len(src_b_events) - len(cross_transfers)),
+        "incomplete": not tr.complete,
+    }
 
     return TraceResponse(
         ok=True, targets=req.targets, hops=hops, chains=chains,
@@ -158,9 +194,6 @@ async def trace(
             "walletsPersisted": persisted["wallets"],
             "transactionsPersisted": persisted["transactions"],
             "scored": len(scores), "scoringMode": mode,
-            # A trace is COMPLETE only if every address on the frontier was
-            # answered. When it is not, say so and name the addresses —
-            # that is the difference between a smaller graph and a wrong one.
             "complete": tr.complete,
             "addressesUnreachable": len(tr.dropped),
             "upstreamRequests": tr.upstream.get("requests", 0),
@@ -175,5 +208,9 @@ async def trace(
         providerErrors=tr.errors,
         graph=graph,
         transactions=raw_txs,
+        crossChainTransfers=formatted_cross_transfers,
+        crossChain=cross_chain_summary,
+        nearestExchange=nearest_ex,
+        attribution=nearest_ex,
         elapsedMs=int((time.perf_counter() - t0) * 1000),
     )

@@ -8,6 +8,7 @@ import SearchPanel from "./SearchPanel.jsx";
 import GraphVisualizer from "./GraphVisualizer.jsx";
 import { WorkspaceNav } from "./WorkspaceNav.jsx";
 import BackToTop from "./BackToTop.jsx";
+import { CaseWorkspace } from "./CaseWorkspace.jsx";
 import { EvidenceLedgerPage } from "./EvidenceLedgerPage.jsx";
 import { WorkspaceCollectionPage } from "./WorkspaceCollectionPage.jsx";
 import { NotificationsPage } from "./NotificationsPage.jsx";
@@ -159,6 +160,24 @@ export default function DashboardPage() {
 
       <main className="workspace-main mx-auto w-full max-w-[1440px] p-4 sm:p-6 lg:p-8">
         <AnimatePresence mode="wait">
+          {/* ── Tab: Investigator Case Workspace ── */}
+          {activeTab === "cases" && (
+            <motion.div
+              key="cases"
+              variants={tabVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              className="space-y-6"
+            >
+              <CaseWorkspace
+                caseId={caseRef || "SIH/2026/00412"}
+                graph={graph}
+                onSelectWallet={(node) => setSelectedEntity(node)}
+              />
+            </motion.div>
+          )}
+
           {/* ── Tab: Live Attribution (Workspace) ── */}
           {activeTab === "workspace" && (
             <motion.div

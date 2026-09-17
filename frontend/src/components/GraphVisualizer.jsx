@@ -56,23 +56,31 @@ function buildGraph(graph) {
     position: { x: index * 245 + 30, y: index % 2 === 0 ? 80 : 215 },
     data: { ...node, label: node.label ?? node.id },
   }));
-  const edges = graph.edges.map((edge) => ({
-    id: edge.tx_hash,
-    source: edge.source,
-    target: edge.target,
-    type: "smoothstep",
-    animated: graph.attribution?.tx_hash === edge.tx_hash,
-    label: `${Number(edge.amount ?? 0).toLocaleString()} ${edge.token ?? "USD"}${edge.risk?.band ? ` [${edge.risk.band}]` : ""}`,
-    data: { ...edge },
-    style: { 
-      stroke: graph.attribution?.tx_hash === edge.tx_hash ? "#d8b84d" : "#2a3654", 
-      strokeWidth: graph.attribution?.tx_hash === edge.tx_hash ? 3 : 2,
-      cursor: "pointer"
-    },
-    labelStyle: { fill: "#d8b84d", fontSize: 10, fontWeight: 600 },
-    labelBgStyle: { fill: "#0f1420", fillOpacity: 0.9 },
-    labelBgPadding: [6, 4],
-  }));
+  const edges = graph.edges.map((edge) => {
+    const isBridge = !!(edge.isBridge || edge.data?.isBridge);
+    const bridgeName = edge.bridgeInfo?.name || edge.crossChainTransfer?.bridge_name || "Cross-Chain Bridge";
+    const isAttributedTx = graph.attribution?.tx_hash === edge.tx_hash;
+    return {
+      id: edge.tx_hash || `${edge.source}-${edge.target}`,
+      source: edge.source,
+      target: edge.target,
+      type: "smoothstep",
+      animated: isBridge || isAttributedTx,
+      label: isBridge 
+        ? `🌉 [${bridgeName}] ${Number(edge.amount ?? 0).toLocaleString()} ${edge.token ?? "USD"}`
+        : `${Number(edge.amount ?? 0).toLocaleString()} ${edge.token ?? "USD"}${edge.risk?.band ? ` [${edge.risk.band}]` : ""}`,
+      data: { ...edge },
+      style: { 
+        stroke: isBridge ? "#c084fc" : (isAttributedTx ? "#d8b84d" : "#2a3654"), 
+        strokeWidth: isBridge ? 3 : (isAttributedTx ? 3 : 2),
+        strokeDasharray: isBridge ? "6 4" : undefined,
+        cursor: "pointer"
+      },
+      labelStyle: { fill: isBridge ? "#e9d5ff" : "#d8b84d", fontSize: 10, fontWeight: 600 },
+      labelBgStyle: { fill: "#0f1420", fillOpacity: 0.9 },
+      labelBgPadding: [6, 4],
+    };
+  });
   return { nodes, edges };
 }
 

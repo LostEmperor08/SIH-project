@@ -94,25 +94,46 @@ export function normalizeBackendTrace(payload) {
       relevance: d.relevance ?? null,
       evidence: d.evidence ?? [],
       flags: d.flags ?? [],
+      isBridge: !!(d.isBridge ?? d.is_bridge),
+      bridgeInfo: d.bridgeInfo ?? d.bridge_info ?? null,
+      crossChainTransfer: d.crossChainTransfer ?? d.cross_chain_transfer ?? null,
     };
   });
 
-  // Decoupled VASP Attribution: look strictly for wallets identified as a VASP/Exchange.
-  // Never fall back to high-risk non-VASP wallets.
-  const vaspNode = nodes.find((n) => n.vaspAttribution || n.type === "VASP");
+  // Decoupled VASP Attribution: consume top-level nearestExchange/attribution or look for identified VASP node.
+  const backendAttr = payload?.attribution ?? payload?.nearestExchange;
+
+  const vaspNode = nodes.find((n) => (n.vaspAttribution && n.vaspAttribution.identified !== false) || n.type === "VASP");
 
   const depositEdge = vaspNode
     ? edges.filter((e) => e.target === vaspNode.id).sort((a, b) => b.amount - a.amount)[0]
     : null;
 
-  const attribution = vaspNode
+  const attribution = backendAttr
     ? {
-        exchange_name: vaspNode.vaspAttribution?.name ?? (vaspNode.label && vaspNode.label !== vaspNode.id ? vaspNode.label : "Unattributed VASP Endpoint"),
+        exchange_name: backendAttr.exchange_name ?? backendAttr.vasp_name ?? "Identified Exchange",
+        deposit_address: backendAttr.deposit_address ?? vaspNode?.id ?? "",
+        hot_wallet_address: backendAttr.deposit_address ?? vaspNode?.id ?? "",
+        tx_hash: depositEdge?.tx_hash ?? "",
+        deposit_timestamp: depositEdge?.timestamp ?? "",
+        confidence: backendAttr.confidence ?? 0.85,
+        wallet_type: backendAttr.wallet_type ?? "DEPOSIT",
+        case_linked_usd: backendAttr.case_linked_usd ?? 0.0,
+        hops: backendAttr.hops ?? vaspNode?.hop ?? 0,
+        time_to_attribution_ms: payload?.elapsedMs ?? 0,
+        entity_type: "exchange",
+        attribution_evidence: backendAttr.evidence ?? [],
+      }
+    : vaspNode
+    ? {
+        exchange_name: vaspNode.vaspAttribution?.name ?? (vaspNode.label && vaspNode.label !== vaspNode.id ? vaspNode.label : "Identified Exchange Endpoint"),
         deposit_address: vaspNode.id,
         hot_wallet_address: vaspNode.id,
         tx_hash: depositEdge?.tx_hash ?? "",
         deposit_timestamp: depositEdge?.timestamp ?? "",
         confidence: vaspNode.vaspAttribution?.confidence ?? 0.85,
+        wallet_type: vaspNode.vaspAttribution?.wallet_type ?? vaspNode.vaspAttribution?.walletType ?? "DEPOSIT",
+        case_linked_usd: vaspNode.inUsd ?? 0.0,
         hops: vaspNode.hop ?? payload?.hops ?? 0,
         time_to_attribution_ms: payload?.elapsedMs ?? 0,
         entity_type: vaspNode.vaspAttribution?.entity_type ?? "exchange",
@@ -125,6 +146,8 @@ export function normalizeBackendTrace(payload) {
     edges,
     attribution,
     transactions: payload?.transactions ?? [],
+    crossChainTransfers: payload?.crossChainTransfers ?? payload?.cross_chain_transfers ?? [],
+    crossChain: payload?.crossChain ?? payload?.cross_chain ?? null,
     stats: payload?.stats ?? null,
     prices: payload?.prices ?? null,
     providerErrors: payload?.providerErrors ?? [],

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   ArrowRight,
   Bell,
@@ -83,9 +83,58 @@ const INITIAL_NOTIFICATIONS = [
   },
 ];
 
+import { getAlerts, acknowledgeAlert, resolveAlert, dismissAlert, connectAlertsWebSocket } from "../lib/api.js";
+
 export function NotificationsPage({ onNavigate }) {
   const [filter, setFilter] = useState("all");
   const [notifs, setNotifs] = useState(INITIAL_NOTIFICATIONS);
+  const [isLive, setIsLive] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    getAlerts({ limit: 100 })
+      .then((liveAlerts) => {
+        if (!alive || !Array.isArray(liveAlerts) || liveAlerts.length === 0) return;
+        const mapped = liveAlerts.map((a) => ({
+          id: a.id,
+          category: a.alert_type?.includes("VASP") || a.alert_type?.includes("EXCHANGE") ? "attribution" : a.alert_type?.includes("SANCTION") ? "evidence" : "watchlist",
+          type: a.severity || "MEDIUM",
+          unread: a.status === "NEW",
+          title: a.title,
+          description: a.summary,
+          time: new Date(a.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+          target: "workspace",
+          actionLabel: "Open Money Trail",
+          raw: a,
+        }));
+        setNotifs((prev) => [...mapped, ...prev.filter((p) => !mapped.some((m) => m.id === p.id))]);
+        setIsLive(true);
+      })
+      .catch(() => {});
+
+    const ws = connectAlertsWebSocket((newAlert) => {
+      if (!alive || !newAlert) return;
+      const mappedNew = {
+        id: newAlert.id,
+        category: "attribution",
+        type: newAlert.severity || "HIGH",
+        unread: true,
+        title: newAlert.title,
+        description: newAlert.summary,
+        time: "Just now",
+        target: "workspace",
+        actionLabel: "Open Money Trail",
+        raw: newAlert,
+      };
+      setNotifs((prev) => [mappedNew, ...prev]);
+      setIsLive(true);
+    });
+
+    return () => {
+      alive = false;
+      if (ws) ws.close();
+    };
+  }, []);
 
   const unreadCount = notifs.filter((n) => n.unread).length;
 
@@ -99,10 +148,17 @@ export function NotificationsPage({ onNavigate }) {
     setNotifs((prev) => prev.map((n) => ({ ...n, unread: false })));
   };
 
-  const markSingleRead = (id) => {
+  const handleAction = async (id, actionType) => {
     setNotifs((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, unread: false } : n))
+      prev.map((n) => (n.id === id ? { ...n, unread: false, type: actionType === "acknowledge" ? "ACKNOWLEDGED" : "RESOLVED" } : n))
     );
+    try {
+      if (actionType === "acknowledge") await acknowledgeAlert(id);
+      else if (actionType === "resolve") await resolveAlert(id);
+      else if (actionType === "dismiss") await dismissAlert(id);
+    } catch (e) {
+      console.warn("Alert action failed:", e);
+    }
   };
 
   return (

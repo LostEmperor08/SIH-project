@@ -23,9 +23,26 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..providers.base import NormEdge
+from .fund_attribution import (
+    compute_fund_attribution,
+    AttributionResult,
+    WalletAttribution,
+    METHOD_UNAVAILABLE,
+    QUALITY_UNAVAILABLE,
+)
 
-RISK_ENGINE_VERSION = "2.0.0"
+RISK_ENGINE_VERSION = "4.0.0"
 SECONDS_PER_DAY = 86_400.0
+
+# Evidence Source Types (Standardized for Batch 4 & 5)
+SOURCE_OBSERVED = "OBSERVED_ON_CHAIN"
+SOURCE_ENTITY = "KNOWN_ENTITY"
+SOURCE_SANCTIONS = "SANCTIONS_SOURCE"
+SOURCE_VASP = "VASP_DIRECTORY"
+SOURCE_BRIDGE = "BRIDGE_DIRECTORY"
+SOURCE_CASE = "CASE_RECORD"
+SOURCE_MODEL = "MODEL_OUTPUT"
+SOURCE_HEURISTIC = "HEURISTIC"
 
 # Centralized Score Bands
 TX_RISK_BANDS = [
@@ -176,6 +193,13 @@ def _modified_z_score(val: float, vals: list[float]) -> float:
     return 0.6745 * (val - med) / mad
 
 
+from .vasp_intelligence import (
+    resolve_vasp_attribution,
+    resolve_nearest_exchange,
+    VaspAttribution,
+)
+
+
 def calculate_vasp_attribution_confidence(
     address: str,
     chain: str,
@@ -183,61 +207,23 @@ def calculate_vasp_attribution_confidence(
     wallets_intel: dict[str, dict] | None = None,
     explicit_vasp_name: str | None = None,
     explicit_entity_type: str | None = None,
+    explicit_wallet_type: str | None = None,
 ) -> dict[str, Any] | None:
     """
     Independent VASP Attribution Confidence calculation.
     COMPLETELY DECOUPLED FROM RISK SCORES.
     Never uses risk_score / 100 or non-VASP high-risk fallbacks.
     """
-    wallets_intel = wallets_intel or {}
-    k = f"{chain}:{address}"
-    intel = wallets_intel.get(k) or wallets_intel.get(address) or {}
-
-    vasp_name = explicit_vasp_name or intel.get("vasp_name")
-    entity_type = explicit_entity_type or intel.get("entity_type")
-
-    # If entity is not a VASP/exchange and no name exists, return None
-    if not vasp_name and entity_type not in ("exchange", "VASP", "vasp"):
+    res = resolve_vasp_attribution(
+        address, chain,
+        wallets_intel=wallets_intel,
+        explicit_vasp_name=explicit_vasp_name,
+        explicit_entity_type=explicit_entity_type,
+        explicit_wallet_type=explicit_wallet_type,
+    )
+    if not res.identified:
         return None
-
-    evidence = []
-    base_confidence = 0.0
-
-    if intel.get("is_known_deposit"):
-        base_confidence = 0.98
-        evidence.append({
-            "type": "known_deposit_address",
-            "description": f"Verified deposit endpoint for {vasp_name or 'VASP'}",
-            "confidence": 0.98,
-        })
-    elif intel.get("is_known_hot_wallet"):
-        base_confidence = 0.95
-        evidence.append({
-            "type": "known_hot_wallet",
-            "description": f"Verified infrastructure hot wallet for {vasp_name or 'VASP'}",
-            "confidence": 0.95,
-        })
-    elif vasp_name:
-        base_confidence = 0.88
-        evidence.append({
-            "type": "cluster_attribution",
-            "description": f"Address attributed to {vasp_name} via entity cluster database",
-            "confidence": 0.88,
-        })
-    elif entity_type in ("exchange", "VASP", "vasp"):
-        base_confidence = 0.75
-        evidence.append({
-            "type": "vasp_registry",
-            "description": "Registered exchange infrastructure endpoint",
-            "confidence": 0.75,
-        })
-
-    return {
-        "name": vasp_name or "Identified Exchange",
-        "entity_type": "exchange",
-        "confidence": round(base_confidence, 2),
-        "evidence": evidence,
-    }
+    return res.to_dict()
 
 
 def score_transaction(
@@ -250,10 +236,11 @@ def score_transaction(
     history_intel: dict[str, Any] | None = None,
     target_values: dict[str, float] | None = None,
     hop_map: dict[str, int] | None = None,
+    attr_res: AttributionResult | dict | None = None,
 ) -> dict[str, Any]:
     """
-    Transaction-Level Risk Engine & Relevance Scorer (SIH 26183).
-    Weighted 100-point deterministic model with factor confidence.
+    Transaction-Level Risk Engine & Relevance Scorer (SIH 26183 Batch 4).
+    Bounded 100-point deterministic model with category budget caps & explicit evidence sources.
     """
     wallets_intel = wallets_intel or {}
     flags = flags or {}
@@ -270,48 +257,76 @@ def score_transaction(
     evidence_strings: list[str] = []
     flag_codes: list[str] = []
 
-    def add_factor(code: str, label: str, raw_pts: float, conf: float, ev_text: str, **obs):
+    def add_factor(
+        code: str,
+        label: str,
+        raw_pts: float,
+        conf: float,
+        ev_text: str,
+        *,
+        source: str = "rule_engine",
+        source_type: str = SOURCE_HEURISTIC,
+        **obs
+    ):
         eff_pts = raw_pts * conf
         if eff_pts > 0:
             factors.append(TransactionFactor(
                 code=code, label=label, raw_points=round(raw_pts, 2),
                 confidence=round(conf, 2), effective_points=round(eff_pts, 2),
-                evidence=ev_text, source="rule_engine", observations=obs
+                evidence=ev_text, source=source, source_type=source_type, observations=obs
             ))
             evidence_strings.append(ev_text)
             flag_codes.append(code)
 
-    # 1. Fund-flow / Case Relevance (0-20 pts)
-    total_target_val = sum(target_values.values()) if target_values else 0.0
-    if total_target_val <= 0:
-        target_txs = [e.value_usd for e in all_edges if e.from_address in target_set]
-        total_target_val = sum(target_txs) if target_txs else val_usd
+    # 1. Fund-flow / Case Relevance (Category budget max: 20 pts)
+    if isinstance(attr_res, AttributionResult):
+        taint_share = attr_res.attribution_share
+        attr_usd = attr_res.attributed_value_usd
+        attr_method = attr_res.attribution_method
+        attr_quality = attr_res.attribution_quality
+        provenance_paths = attr_res.provenance_paths
+    elif isinstance(attr_res, dict):
+        taint_share = float(attr_res.get("attribution_share", 0.0))
+        attr_usd = float(attr_res.get("attributed_value_usd", 0.0))
+        attr_method = str(attr_res.get("attribution_method", METHOD_UNAVAILABLE))
+        attr_quality = str(attr_res.get("attribution_quality", QUALITY_UNAVAILABLE))
+        provenance_paths = attr_res.get("provenance_paths", [])
+    else:
+        total_target_val = sum(target_values.values()) if target_values else 0.0
+        if total_target_val <= 0:
+            target_txs = [e.value_usd for e in all_edges if e.from_address in target_set]
+            total_target_val = sum(target_txs) if target_txs else val_usd
 
-    taint_share = min(1.0, val_usd / max(total_target_val, 1.0)) if val_usd > 0 else 0.0
+        taint_share = min(1.0, val_usd / max(total_target_val, 1.0)) if val_usd > 0 else 0.0
+        attr_usd = val_usd * taint_share
+        attr_method = "DIRECT_SOURCE" if (frm in target_set) else "PRO_RATA"
+        attr_quality = "DIRECT" if (frm in target_set) else "MEDIUM"
+        provenance_paths = []
+
     fund_attribution_share = taint_share
 
     if taint_share >= 0.80:
         add_factor("HIGH_FUND_ATTRIBUTION", "High case fund attribution", 20.0, 1.0,
-                   f"Carries {taint_share:.1%} of reported case funds (${val_usd:,.2f})",
-                   taintShare=round(taint_share, 4))
+                   f"Carries {taint_share:.1%} of reported case funds (${attr_usd:,.2f})",
+                   source_type=SOURCE_CASE, taintShare=round(taint_share, 4), attributedUsd=round(attr_usd, 2))
     elif taint_share >= 0.50:
         add_factor("MODERATE_FUND_ATTRIBUTION", "Significant case fund attribution", 16.0, 1.0,
-                   f"Carries {taint_share:.1%} of reported case funds",
-                   taintShare=round(taint_share, 4))
+                   f"Carries {taint_share:.1%} of reported case funds (${attr_usd:,.2f})",
+                   source_type=SOURCE_CASE, taintShare=round(taint_share, 4), attributedUsd=round(attr_usd, 2))
     elif taint_share >= 0.20:
         add_factor("PARTIAL_FUND_ATTRIBUTION", "Partial case fund attribution", 10.0, 0.9,
-                   f"Carries {taint_share:.1%} of reported case funds",
-                   taintShare=round(taint_share, 4))
+                   f"Carries {taint_share:.1%} of reported case funds (${attr_usd:,.2f})",
+                   source_type=SOURCE_CASE, taintShare=round(taint_share, 4), attributedUsd=round(attr_usd, 2))
     elif taint_share >= 0.05:
         add_factor("LOW_FUND_ATTRIBUTION", "Low case fund attribution", 5.0, 0.8,
-                   f"Carries {taint_share:.1%} of reported case funds",
-                   taintShare=round(taint_share, 4))
+                   f"Carries {taint_share:.1%} of reported case funds (${attr_usd:,.2f})",
+                   source_type=SOURCE_CASE, taintShare=round(taint_share, 4), attributedUsd=round(attr_usd, 2))
     elif taint_share > 0.0:
         add_factor("TRACE_PATH_MEMBER", "On case flow path", 1.0, 0.5,
                    "Minor flow on active case money path",
-                   taintShare=round(taint_share, 4))
+                   source_type=SOURCE_CASE, taintShare=round(taint_share, 4), attributedUsd=round(attr_usd, 2))
 
-    # 2. Counterparty Intelligence (0-20 pts)
+    # 2. Counterparty Intelligence (Category budget max: 15 pts)
     sanctions_set = set(flags.get("sanctioned", []))
     mixers_set = set(flags.get("mixers", []))
     darknet_set = set(flags.get("darknet", []))
@@ -320,42 +335,39 @@ def score_transaction(
 
     is_sanction_tx = frm in sanctions_set or to in sanctions_set
     if is_sanction_tx:
-        add_factor("SANCTIONS_EXPOSURE", "Direct sanctions counterparty", 20.0, 1.0,
+        add_factor("SANCTIONS_EXPOSURE", "Direct sanctions counterparty", 15.0, 1.0,
                    "Transaction directly involves an OFAC-sanctioned wallet address",
-                   sanctionedAddress=to if to in sanctions_set else frm)
-
-    if (to in mixers_set or frm in mixers_set) and not is_sanction_tx:
-        add_factor("MIXER_INTERACTION", "Mixer / tumbler interaction", 16.0, 0.9,
+                   source_type=SOURCE_SANCTIONS, sanctionedAddress=to if to in sanctions_set else frm)
+    elif to in mixers_set or frm in mixers_set:
+        add_factor("MIXER_INTERACTION", "Mixer / tumbler interaction", 15.0, 0.9,
                    "Transaction interacts directly with a privacy mixer/tumbler",
-                   mixerAddress=to if to in mixers_set else frm)
-
-    if (to in darknet_set or frm in darknet_set) and not is_sanction_tx:
-        add_factor("DARKNET_ENDPOINT", "Darknet market exposure", 16.0, 0.9,
+                   source_type=SOURCE_ENTITY, mixerAddress=to if to in mixers_set else frm)
+    elif to in darknet_set or frm in darknet_set:
+        add_factor("DARKNET_ENDPOINT", "Darknet market exposure", 15.0, 0.9,
                    "Transaction interacts directly with darknet infrastructure",
-                   darknetAddress=to if to in darknet_set else frm)
-
-    if (to in illicit_set or frm in illicit_set) and not is_sanction_tx:
-        add_factor("ILLICIT_CLUSTER", "Known illicit cluster hit", 16.0, 0.9,
+                   source_type=SOURCE_ENTITY, darknetAddress=to if to in darknet_set else frm)
+    elif to in illicit_set or frm in illicit_set:
+        add_factor("ILLICIT_CLUSTER", "Known illicit cluster hit", 15.0, 0.9,
                    "Transaction counterparty belongs to a verified fraud cluster",
-                   illicitAddress=to if to in illicit_set else frm)
+                   source_type=SOURCE_ENTITY, illicitAddress=to if to in illicit_set else frm)
 
-    # 3. Behavioral Anomaly (Modified Z-score) (0-15 pts)
+    # 3. Behavioral Anomaly (Modified Z-score) (Category budget max: 15 pts)
     sender_vals = [e.value_usd for e in all_edges if e.from_address == frm]
     mod_z = _modified_z_score(val_usd, sender_vals)
     if mod_z >= 3.5:
         add_factor("EXTREME_VALUE_ANOMALY", "Extreme value anomaly", 15.0, 0.9,
                    f"Transfer amount (${val_usd:,.2f}) is an extreme statistical anomaly (Modified Z={mod_z:.1f})",
-                   modifiedZ=round(mod_z, 2))
+                   source_type=SOURCE_OBSERVED, modifiedZ=round(mod_z, 2))
     elif mod_z >= 2.5:
         add_factor("STRONG_VALUE_ANOMALY", "Strong value anomaly", 10.0, 0.8,
                    f"Transfer amount is a strong anomaly (Modified Z={mod_z:.1f})",
-                   modifiedZ=round(mod_z, 2))
+                   source_type=SOURCE_OBSERVED, modifiedZ=round(mod_z, 2))
     elif mod_z >= 1.5:
         add_factor("MODERATE_VALUE_ANOMALY", "Moderate value anomaly", 5.0, 0.7,
                    f"Transfer amount deviates from baseline (Modified Z={mod_z:.1f})",
-                   modifiedZ=round(mod_z, 2))
+                   source_type=SOURCE_OBSERVED, modifiedZ=round(mod_z, 2))
 
-    # 4. Transaction Velocity / Rapid Forwarding (0-10 pts)
+    # 4. Transaction Velocity / Rapid Forwarding (Category budget max: 10 pts)
     tx_time = _epoch(edge.block_time)
     incoming_times = [_epoch(e.block_time) for e in all_edges if e.to_address == frm and _epoch(e.block_time) <= tx_time]
     delay_sec = (tx_time - max(incoming_times)) if incoming_times else 999999.0
@@ -366,21 +378,21 @@ def score_transaction(
     if 0 <= delay_sec < 60 and forward_ratio >= 0.85:
         add_factor("RAPID_PASS_THROUGH", "Rapid pass-through", 10.0, 0.95,
                    f"{forward_ratio:.1%} of received value forwarded {delay_sec:.0f} seconds after receipt",
-                   delaySeconds=round(delay_sec, 1), forwardedRatio=round(forward_ratio, 3))
+                   source_type=SOURCE_OBSERVED, delaySeconds=round(delay_sec, 1), forwardedRatio=round(forward_ratio, 3))
     elif 0 <= delay_sec < 600 and forward_ratio >= 0.70:
         add_factor("FAST_FORWARDING", "Fast forwarding", 8.0, 0.90,
                    f"Forwarded {delay_sec / 60.0:.1f} minutes after receipt",
-                   delaySeconds=round(delay_sec, 1))
+                   source_type=SOURCE_OBSERVED, delaySeconds=round(delay_sec, 1))
     elif 0 <= delay_sec < 3600:
         add_factor("ELEVATED_VELOCITY", "Elevated transaction velocity", 6.0, 0.80,
                    f"Forwarded within {delay_sec / 60.0:.0f} minutes",
-                   delaySeconds=round(delay_sec, 1))
+                   source_type=SOURCE_OBSERVED, delaySeconds=round(delay_sec, 1))
     elif 0 <= delay_sec < 86400:
         add_factor("SAME_DAY_FORWARDING", "Same-day forwarding", 3.0, 0.70,
                    f"Forwarded within {delay_sec / 3600.0:.1f} hours",
-                   delaySeconds=round(delay_sec, 1))
+                   source_type=SOURCE_OBSERVED, delaySeconds=round(delay_sec, 1))
 
-    # 5. Graph Topology (0-10 pts)
+    # 5. Graph Topology (Category budget max: 10 pts)
     frm_out_count = len({e.to_address for e in all_edges if e.from_address == frm})
     frm_in_count = len({e.from_address for e in all_edges if e.to_address == frm})
     to_out_count = len({e.to_address for e in all_edges if e.from_address == to})
@@ -389,63 +401,70 @@ def score_transaction(
     if frm_in_count >= 15 and frm_out_count <= 3:
         add_factor("COLLECTION_FUNNEL", "Collection funnel flow", 10.0, 0.9,
                    f"Sourced from collection funnel ({frm_in_count} senders -> {frm_out_count} receivers)",
-                   fanIn=frm_in_count, fanOut=frm_out_count)
+                   source_type=SOURCE_OBSERVED, fanIn=frm_in_count, fanOut=frm_out_count)
     elif frm_out_count >= 25 and frm_in_count <= 3:
         add_factor("DISTRIBUTION_PATTERN", "Distribution point flow", 8.0, 0.85,
                    f"Outbound flow from distribution hub ({frm_out_count} recipients)",
-                   fanOut=frm_out_count)
+                   source_type=SOURCE_OBSERVED, fanOut=frm_out_count)
 
-    # 6. Structuring Pattern (0-10 pts)
+    # 6. Structuring Pattern (Category budget max: 10 pts)
     if 8000.0 <= val_usd <= 9999.0:
         near_struct_count = sum(1 for e in all_edges if 8000.0 <= e.value_usd <= 9999.0 and (e.from_address == frm or e.to_address == to))
         if near_struct_count >= 5:
             add_factor("STRUCTURING_HIGH", "Repeated threshold structuring", 10.0, 0.95,
                        f"Part of {near_struct_count} transfers clustered just below $10k reporting threshold",
-                       nearCount=near_struct_count)
+                       source_type=SOURCE_OBSERVED, nearCount=near_struct_count)
         elif near_struct_count >= 3:
             add_factor("STRUCTURING_MODERATE", "Moderate threshold structuring", 7.0, 0.85,
                        f"Part of {near_struct_count} near-threshold transfers",
-                       nearCount=near_struct_count)
+                       source_type=SOURCE_OBSERVED, nearCount=near_struct_count)
         else:
             add_factor("STRUCTURING_LOW", "Near-threshold transfer", 3.0, 0.70,
                        "Transfer amount sits just below $10k reporting threshold",
-                       nearCount=near_struct_count)
+                       source_type=SOURCE_OBSERVED, nearCount=near_struct_count)
 
-    # 7. Obfuscation / Cross-Chain / Bridge (0-10 pts)
+    # 7. Obfuscation / Cross-Chain / Bridge (Category budget max: 10 pts)
     bridges_set = set(flags.get("bridges", []))
     is_bridge_tx = frm in bridges_set or to in bridges_set
 
     if (frm in mixers_set or to in mixers_set) and delay_sec < 300:
         add_factor("MIXER_RAPID_FORWARDING", "Mixer rapid forwarding", 10.0, 0.95,
-                   "Rapid movement immediately associated with a mixer endpoint")
+                   "Rapid movement immediately associated with a mixer endpoint",
+                   source_type=SOURCE_BRIDGE)
     elif is_bridge_tx and delay_sec < 600:
         add_factor("BRIDGE_RAPID_FORWARDING", "Bridge rapid forwarding", 6.0, 0.85,
-                   "Rapid cross-chain bridge transition")
+                   "Rapid cross-chain bridge transition",
+                   source_type=SOURCE_BRIDGE)
     elif is_bridge_tx:
         add_factor("BRIDGE_CROSS_CHAIN", "Cross-chain bridge transition", 2.0, 0.80,
-                   "Ordinary cross-chain bridge usage")
+                   "Ordinary cross-chain bridge usage",
+                   source_type=SOURCE_BRIDGE)
 
-    # 8. Historical Intelligence (0-5 pts)
+    # 8. Historical Intelligence (Category budget max: 5 pts)
     hist_hits = history_intel.get("case_hits", 0)
     if hist_hits > 0:
         add_factor("HISTORICAL_CASE_HIT", "Historical case intelligence hit", min(5.0, hist_hits * 2.5), 0.9,
-                   f"Counterparty linked to {hist_hits} prior fraud investigation(s)")
+                   f"Counterparty linked to {hist_hits} prior fraud investigation(s)",
+                   source_type=SOURCE_CASE)
 
-    # Calculate final effective score
+    # Calculate final effective score bounded at 100.0
     raw_total = sum(f.effective_points for f in factors)
     final_score = min(100.0, round(raw_total, 2))
 
-    # Direct sanctions override floor for transactions
+    # Direct sanctions hard floor for transactions (minimum 90.0 CRITICAL)
     override_applied = False
+    sanction_floor_reason = None
+    sanction_source = None
     if is_sanction_tx:
         final_score = max(final_score, 90.0)
         override_applied = True
+        sanction_floor_reason = "Direct verified sanctions match on transaction counterparty"
+        sanction_source = "OFAC_SDN_LIST"
 
     band = tx_risk_band(final_score)
     avg_conf = (sum(f.confidence for f in factors) / len(factors)) if factors else 0.80
 
-    # Calculate Relevance Score (0-100) independently
-    # Relevance answers: "How important is this transaction to the investigation?"
+    # Calculate Relevance Score (0-100) independently (Relevance != Risk)
     rel_taint = taint_share * 40.0
     hop_dist = hop_map.get(to, hop_map.get(frm, 1))
     rel_hop = 35.0 if hop_dist == 1 else (25.0 if hop_dist == 2 else 15.0)
@@ -467,13 +486,19 @@ def score_transaction(
             "score": final_score,
             "band": band,
             "confidence": round(avg_conf, 2),
-            "override_applied": override_applied,
+            "sanction_floor_applied": override_applied,
+            "sanction_floor_reason": sanction_floor_reason,
+            "sanction_source": sanction_source,
             "factors": [f.to_dict() for f in sorted(factors, key=lambda x: -x.effective_points)],
         },
         "relevance": {
             "score": relevance_score,
             "taint_share": round(taint_share, 4),
             "fund_attribution_share": round(fund_attribution_share, 4),
+            "attributed_value_usd": round(attr_usd, 2),
+            "attribution_method": attr_method,
+            "attribution_quality": attr_quality,
+            "provenance_paths": provenance_paths,
             "hop": hop_dist,
         },
         "evidence": evidence_strings,
@@ -608,6 +633,7 @@ def score_wallet(
     is_target: bool,
     tx_scores: list[dict[str, Any]] | None = None,
     wallets_intel: dict[str, dict] | None = None,
+    wallet_attribution: WalletAttribution | dict | None = None,
 ) -> dict[str, Any]:
     """
     Score one wallet. Aggregates behavioral patterns AND transaction-level risk metrics.
@@ -755,6 +781,55 @@ def score_wallet(
         explicit_entity_type=intel.get("entity_type")
     )
 
+    if isinstance(wallet_attribution, WalletAttribution):
+        w_attr_dict = wallet_attribution.to_dict()
+    elif isinstance(wallet_attribution, dict):
+        w_attr_dict = wallet_attribution
+    else:
+        w_attr_dict = {
+            "address": s.address,
+            "chain": s.chain,
+            "attributed_inbound_usd": round(s.in_usd, 2) if is_target else 0.0,
+            "attributed_outbound_usd": round(s.out_usd, 2) if is_target else 0.0,
+            "total_inbound_usd": round(s.in_usd, 2),
+            "total_outbound_usd": round(s.out_usd, 2),
+            "attribution_share": 1.0 if is_target else 0.0,
+            "attribution_quality": "DIRECT" if is_target else "UNAVAILABLE",
+            "source_paths": [s.address] if is_target else [],
+            "participating_sources": [s.address] if is_target else [],
+        }
+
+    # Construct structured alert events for Batch 5 handoff
+    alert_events: list[dict[str, Any]] = []
+    if floor_applied or sanction_hops == 0:
+        alert_events.append({
+            "event_type": "SANCTIONS_MATCH",
+            "severity": "CRITICAL",
+            "detail": "Direct sanctions match verified on wallet address",
+            "address": s.address,
+        })
+    if crit_tx_count > 0 or total >= 80.0:
+        alert_events.append({
+            "event_type": "CRITICAL_RISK_THRESHOLD",
+            "severity": "CRITICAL",
+            "detail": f"Wallet risk score reached {total:.1f} (CRITICAL)",
+            "address": s.address,
+        })
+    if "PASS_THROUGH" in {f.code for f in factors} or "BURNER_SWEEP" in {f.code for f in factors}:
+        alert_events.append({
+            "event_type": "RAPID_FORWARDING_MULE",
+            "severity": "HIGH",
+            "detail": "High-velocity pass-through mule pattern observed",
+            "address": s.address,
+        })
+    if exchange_hops == 0 and not is_target:
+        alert_events.append({
+            "event_type": "KNOWN_EXCHANGE_REACHED",
+            "severity": "HIGH",
+            "detail": f"Funds deposit directly into exchange ({vasp_attr.get('name') if vasp_attr else 'Exchange'})",
+            "address": s.address,
+        })
+
     return {
         "address": s.address,
         "chain": s.chain,
@@ -762,12 +837,14 @@ def score_wallet(
         "risk_band": band,
         "sanction_floor_applied": floor_applied,
         "sanction_floor_reason": floor_reason,
+        "sanction_source": "OFAC_SDN_LIST" if floor_applied else None,
         "factors": [
             {"code": f.code, "label": f.label, "points": f.points,
              "detail": f.detail, "evidence": f.evidence}
             for f in sorted(factors, key=lambda x: -x.points)
         ],
         "vasp_attribution": vasp_attr,
+        "fund_attribution": w_attr_dict,
         "transaction_aggregates": {
             "mean_transaction_risk": round(mean_tx_risk, 2),
             "max_transaction_risk": round(max_tx_risk, 2),
@@ -792,6 +869,7 @@ def score_wallet(
         "narrative": _narrate(s, factors, total, band),
         "recommended_actions": _recommend(
             band, sanction_hops, mixer_hops, exchange_hops, factors),
+        "structured_alert_events": alert_events,
         "engine_version": RISK_ENGINE_VERSION,
     }
 
@@ -852,9 +930,10 @@ def score_graph(
     exchanges: set[str] | None = None,
     darknet: set[str] | None = None,
     wallets_intel: dict[str, dict] | None = None,
+    initial_amounts: dict[str, float] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
     """
-    Score every wallet AND every transaction in a traced graph.
+    Score every wallet AND every transaction in a traced graph using the Fund Attribution Engine.
     Returns (scored_wallets_dict, scored_transactions_list).
     """
     if not edges:
@@ -874,13 +953,18 @@ def score_graph(
         "darknet": list(darknet),
     }
 
+    # 1. Run Fund Attribution Engine
+    edge_attr_map, wallet_attr_map = compute_fund_attribution(
+        edges, targets, initial_amounts=initial_amounts
+    )
+
     stats = build_stats(edges)
     h_sanction = _hops_map(edges, sanctioned)
     h_mixer = _hops_map(edges, mixers)
     h_exchange = _hops_map(edges, exchanges)
     h_darknet = _hops_map(edges, darknet)
 
-    # 1. Score every transaction first
+    # 2. Score every transaction first
     scored_txs: list[dict[str, Any]] = []
     txs_by_wallet: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
@@ -890,15 +974,17 @@ def score_graph(
             wallets_intel=wallets_intel,
             flags=flags,
             hop_map=h_sanction,
+            attr_res=edge_attr_map.get(edge.key),
         )
         scored_txs.append(sc_tx)
         txs_by_wallet[edge.from_address].append(sc_tx)
         txs_by_wallet[edge.to_address].append(sc_tx)
 
-    # 2. Score every wallet, consuming transaction-level risk metrics
+    # 3. Score every wallet, consuming transaction-level risk metrics AND fund attribution
     scored_wallets: dict[str, dict[str, Any]] = {}
     for key, s in stats.items():
         a = s.address
+        w_attr = wallet_attr_map.get(key) or wallet_attr_map.get(f"{s.chain}:{a}")
         scored_wallets[a] = score_wallet(
             key, s,
             sanction_hops=h_sanction.get(a),
@@ -909,6 +995,7 @@ def score_graph(
             is_target=a in target_set,
             tx_scores=txs_by_wallet.get(a, []),
             wallets_intel=wallets_intel,
+            wallet_attribution=w_attr,
         )
 
     return scored_wallets, scored_txs

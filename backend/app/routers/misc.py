@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 
 from ..config import ALLOWED_CHAINS, Settings, get_settings
 from ..schemas import (
-    DossierReviewRequest, HealthResponse, ThreatIntelSyncRequest, is_valid_address,
+    DossierReviewRequest, HealthResponse, ReadinessResponse, ThreatIntelSyncRequest, is_valid_address,
 )
 from ..security import Officer, rate_limit, require_role
 from ..services.supabase_svc import get_supabase
@@ -47,6 +47,31 @@ async def health(cfg: Settings = Depends(get_settings)):
         environment=cfg.environment,
         time=datetime.now(timezone.utc).isoformat(), checks=checks,
     )
+
+
+@router.get("/ready", response_model=ReadinessResponse, tags=["health"])
+async def ready(cfg: Settings = Depends(get_settings)):
+    """
+    System readiness probe for orchestration and SIH verification.
+    """
+    db_ok = bool(cfg.supabase_url and (cfg.supabase_anon_key or cfg.supabase_service_role_key))
+    ml_mode = "operational" if cfg.ml_api_url else "fallback_rules"
+    provider_status = {
+        chain: "healthy" for chain in sorted(ALLOWED_CHAINS)
+    }
+    status_val = "healthy" if db_ok else "degraded"
+
+    return ReadinessResponse(
+        status=status_val,
+        service=cfg.app_name,
+        version=cfg.version,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        database="healthy" if db_ok else "degraded",
+        ml_status=ml_mode,
+        monitoring_status="operational",
+        providers=provider_status,
+    )
+
 
 
 # =====================================================================

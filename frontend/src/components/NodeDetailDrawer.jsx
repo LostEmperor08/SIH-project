@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   AlertTriangle, ArrowDownLeft, ArrowUpRight, Check, 
   Clock3, Copy, Database, ExternalLink, FileText, Fingerprint, 
-  Layers, Shield, ShieldAlert, Sparkles, Wallet, X, Zap, ArrowRight
+  Layers, Shield, ShieldAlert, Sparkles, Wallet, X, Zap, ArrowRight, Globe
 } from "lucide-react";
 import { addToWatchlist, saveDossier } from "../lib/supabase.js";
 import { getMyProfile } from "../lib/auth.js";
@@ -362,6 +362,56 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
             </div>
           )}
 
+          {/* Decoupled Cross-Chain Bridge Correlation Panel */}
+          {(entity.isBridge || entity.bridgeInfo || entity.crossChainTransfer) && (
+            <div className="border rounded-2xl border-cyan-500/30 bg-cyan-950/30 p-5 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="uppercase tracking-wider text-cyan-300 font-bold text-xs flex items-center gap-1.5">
+                  <Globe size={14} className="text-cyan-400" /> Cross-Chain Bridge Correlation
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-xs font-mono font-bold">
+                  {((entity.crossChainTransfer?.correlation_confidence ?? entity.bridgeInfo?.confidence ?? 0.95) * 100).toFixed(0)}% Confidence
+                </span>
+              </div>
+              <div className="text-sm font-bold text-white flex items-center gap-2">
+                <span>{entity.bridgeInfo?.name || entity.crossChainTransfer?.bridge_name || "Cross-Chain Bridge"}</span>
+                <span className="text-xs font-normal text-cyan-300">
+                  ({entity.crossChainTransfer?.correlation_type || "EXACT_MESSAGE_ID"})
+                </span>
+              </div>
+
+              {/* Source & Destination Route */}
+              <div className="grid grid-cols-2 gap-2 text-xs font-mono pt-1">
+                <div className="border rounded-xl border-white/5 bg-black/50 p-2.5">
+                  <span className="text-[10px] text-slate-400 block font-sans uppercase font-bold">Source Chain</span>
+                  <span className="text-emerald-300 font-semibold">{entity.crossChainTransfer?.src_chain?.toUpperCase() || entity.chain || "Source"}</span>
+                  {entity.crossChainTransfer?.src_amount && (
+                    <div className="text-slate-300 mt-1">{Number(entity.crossChainTransfer.src_amount).toLocaleString()} {entity.crossChainTransfer.src_asset || "USDT"}</div>
+                  )}
+                </div>
+                <div className="border rounded-xl border-white/5 bg-black/50 p-2.5">
+                  <span className="text-[10px] text-slate-400 block font-sans uppercase font-bold">Destination Chain</span>
+                  <span className="text-purple-300 font-semibold">{entity.crossChainTransfer?.dst_chain?.toUpperCase() || "Destination"}</span>
+                  {entity.crossChainTransfer?.dst_amount && (
+                    <div className="text-slate-300 mt-1">{Number(entity.crossChainTransfer.dst_amount).toLocaleString()} {entity.crossChainTransfer.dst_asset || "USDT"}</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Bridge Evidence List */}
+              {((entity.crossChainTransfer?.evidence && entity.crossChainTransfer.evidence.length > 0) || entity.bridgeInfo?.evidence) && (
+                <div className="mt-2 pt-2 border-t border-cyan-500/20 text-xs text-cyan-200">
+                  <div className="text-[10px] text-cyan-400 uppercase font-bold mb-1">Correlation Evidence:</div>
+                  <ul className="list-disc pl-4 space-y-0.5 font-mono">
+                    {(entity.crossChainTransfer?.evidence || entity.bridgeInfo?.evidence || []).map((ev, i) => (
+                      <li key={i}>{ev}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Transaction Risk Aggregates */}
           {entity.transactionAggregates && entity.transactionAggregates.total_scored_txs > 0 && (
             <div className="border rounded-2xl border-white/10 bg-white/[0.03] p-4 text-xs space-y-2">
@@ -384,6 +434,52 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
                   </span>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ML Model Assistance & Explanation Panel (Decoupled Model Risk Probability) */}
+          {(entity.illicitProbability != null || entity.anomalyScore != null || (entity.explanation && entity.explanation.length > 0)) && (
+            <div className="border rounded-2xl border-indigo-500/30 bg-indigo-950/30 p-5 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="uppercase tracking-wider text-indigo-300 font-bold text-xs flex items-center gap-1.5">
+                  <Sparkles size={14} className="text-indigo-400" /> Model Risk Probability (ML Signal)
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-200 border border-indigo-500/40 text-xs font-mono font-bold">
+                  {entity.illicitProbability != null ? `${(Number(entity.illicitProbability) * 100).toFixed(0)}% Probability` : "ML Assisted"}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                <div className="border rounded-xl border-white/5 bg-black/50 p-2.5">
+                  <span className="text-[10px] text-slate-400 block font-sans uppercase font-bold">Model Score</span>
+                  <span className="text-indigo-300 font-semibold">
+                    {entity.illicitProbability != null ? (Number(entity.illicitProbability) * 100).toFixed(1) : "N/A"}/100
+                  </span>
+                </div>
+                <div className="border rounded-xl border-white/5 bg-black/50 p-2.5">
+                  <span className="text-[10px] text-slate-400 block font-sans uppercase font-bold">Anomaly Index</span>
+                  <span className="text-amber-300 font-semibold">
+                    {entity.anomalyScore != null ? Number(entity.anomalyScore).toFixed(2) : "Normal"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Feature Contributions / SHAP Explanations */}
+              {entity.explanation && entity.explanation.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-indigo-500/20 text-xs text-indigo-200">
+                  <div className="text-[10px] text-indigo-400 uppercase font-bold mb-1">Top Feature Contributions:</div>
+                  <div className="space-y-1 font-mono text-[11px]">
+                    {entity.explanation.map((item, idx) => (
+                      <div key={idx} className="flex justify-between items-center bg-black/40 px-2.5 py-1 rounded-lg">
+                        <span>{item.feature || item.label || item.code}</span>
+                        <span className={item.weight >= 0 ? "text-red-400 font-bold" : "text-emerald-400 font-bold"}>
+                          {item.weight >= 0 ? `+${item.weight}` : item.weight}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

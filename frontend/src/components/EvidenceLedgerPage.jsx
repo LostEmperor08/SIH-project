@@ -7,6 +7,7 @@ import {
   Shield, Activity, ArrowRight, RefreshCw
 } from "lucide-react";
 import { fetchEvidenceRecords, fetchEvidenceCases } from "../lib/supabase.js";
+import { exportEvidencePackage, verifyEvidenceChainApi } from "../lib/api.js";
 import { NodeDetailDrawer } from "./NodeDetailDrawer.jsx";
 
 export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, activeFir, suspectAddress }) {
@@ -368,12 +369,25 @@ export function EvidenceLedgerPage({ onNavigate, graph, activeCaseRef, caseRef, 
 
             <button
               type="button"
-              onClick={exportExcel}
-              disabled={!filteredRecords.length}
-              className="btn-secondary flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold cursor-pointer disabled:opacity-40"
+              onClick={async () => {
+                try {
+                  const pkg = await exportEvidencePackage(activeCase || "SIH/2026/00412");
+                  if (pkg) {
+                    const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement("a");
+                    link.href = url;
+                    link.download = pkg.download_filename || "evidence_package.json";
+                    link.click();
+                  }
+                } catch (e) {
+                  alert(`Export package error: ${e.message}`);
+                }
+              }}
+              className="rolex-green-btn flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold cursor-pointer"
             >
-              <FileSpreadsheet size={14} />
-              <span className="font-extrabold">Export Excel</span>
+              <CloudDownload size={14} className="text-[#150F00]" />
+              <span className="font-extrabold text-[#150F00]">Export Evidence Package</span>
             </button>
           </div>
         </div>

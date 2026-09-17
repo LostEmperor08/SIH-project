@@ -153,6 +153,9 @@ def score_wallets(
             "rules_fired": fired,
             "typologies": typ_top[i],
             "explanation": contribs[i],
+            "scoring_mode": "ml+heuristic" if b.ready else "heuristic",
+            "ml_model_version": (b.manifests.get("illicit") or {}).get("version", "4.0.0"),
+            "ml_feature_version": "2.0.0",
             # The PS asks specifically for the NEAREST VASP receiving direct
             # deposits — that is this field, and it is what a freeze request
             # is addressed to.

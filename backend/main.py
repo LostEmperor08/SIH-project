@@ -164,8 +164,16 @@ async def _unhandled(request: Request, exc: Exception):
     )
 
 
+from app.routers import alerts, cases, evidence, integrations, misc, monitoring, reports, trace
+
 app.include_router(misc.router)
 app.include_router(trace.router)
+app.include_router(alerts.router)
+app.include_router(monitoring.router)
+app.include_router(cases.router)
+app.include_router(evidence.router)
+app.include_router(reports.router)
+app.include_router(integrations.router)
 
 
 @app.get("/", include_in_schema=False)

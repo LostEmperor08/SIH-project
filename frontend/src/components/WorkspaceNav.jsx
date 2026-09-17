@@ -12,6 +12,7 @@ import { getMyProfile, signOutOfficer } from "../lib/auth.js";
 
 const workspaceLinks = [
   { id: "landing", label: "Home", icon: Home },
+  { id: "cases", label: "Case Workspace", icon: Layers },
   { id: "workspace", label: "Money Trail", icon: Activity },
   { id: "watchlist", label: "Watchlist", icon: Shield },
   { id: "dossier", label: "Section 91 Notice", icon: FileText },

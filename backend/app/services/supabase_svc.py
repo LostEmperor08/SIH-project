@@ -170,6 +170,117 @@ class SupabaseService:
                         flags["bridges"].append(w["address"])
         return wallets, flags
 
+    async def batch_lookup_vasp_intelligence(
+        self, chains: list[str], addresses: list[str]
+    ) -> dict[str, dict]:
+        """
+        Batch lookup VASP records, wallet roles, clusters, and evidence across traced wallets.
+        Prevents N+1 database queries during trace execution.
+        """
+        intel_map: dict[str, dict] = {}
+        if not addresses or not self._has_url():
+            return intel_map
+
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            for batch in _chunk(addresses, 200):
+                in_list = ",".join(f'"{a}"' for a in batch)
+                try:
+                    r = await c.get(
+                        f"{self._rest}/vasp_wallets",
+                        headers=self._svc_headers(),
+                        params={
+                            "select": "chain,address,wallet_type,label,cluster_id,source,evidence_type,confidence,vasps(id,name,legal_name,entity_type)",
+                            "chain": f"in.({','.join(chains)})",
+                            "address": f"in.({in_list})",
+                            "is_active": "eq.true",
+                        },
+                    )
+                    if r.status_code == 200:
+                        for row in r.json():
+                            addr = row.get("address")
+                            ch = row.get("chain")
+                            vasp_info = row.get("vasps") or {}
+                            k = f"{ch}:{addr}"
+                            intel_map[k] = {
+                                "vasp_id": vasp_info.get("id"),
+                                "vasp_name": vasp_info.get("name"),
+                                "name": vasp_info.get("name"),
+                                "entity_type": vasp_info.get("entity_type", "exchange"),
+                                "wallet_type": row.get("wallet_type", "DEPOSIT"),
+                                "label": row.get("label"),
+                                "cluster_id": row.get("cluster_id"),
+                                "source": row.get("source"),
+                                "is_known_deposit": row.get("wallet_type") == "DEPOSIT",
+                                "is_known_hot_wallet": row.get("wallet_type") == "HOT",
+                                "is_known_cold_wallet": row.get("wallet_type") == "COLD",
+                            }
+                except Exception as e:
+                    log.warning("vasp_wallets batch query failed: %s", e)
+
+        return intel_map
+
+    async def batch_lookup_bridge_intelligence(
+        self, chains: list[str], addresses: list[str]
+    ) -> dict[str, dict]:
+        """
+        Batch lookup bridge contract records and active routes across traced wallets.
+        Prevents N+1 database queries during cross-chain trace execution.
+        """
+        intel_map: dict[str, dict] = {}
+        if not addresses or not self._has_url():
+            return intel_map
+
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            for batch in _chunk(addresses, 200):
+                in_list = ",".join(f'"{a}"' for a in batch)
+                try:
+                    r = await c.get(
+                        f"{self._rest}/bridge_contracts",
+                        headers=self._svc_headers(),
+                        params={
+                            "select": "chain,address,role,bridge_id,bridges(id,name,protocol)",
+                            "chain": f"in.({','.join(chains)})",
+                            "address": f"in.({in_list})",
+                            "active": "eq.true",
+                        },
+                    )
+                    if r.status_code == 200:
+                        for row in r.json():
+                            addr = row.get("address")
+                            ch = row.get("chain")
+                            bridge_info = row.get("bridges") or {}
+                            k = f"{ch}:{addr}"
+                            intel_map[k] = {
+                                "bridge_id": row.get("bridge_id"),
+                                "bridge_name": bridge_info.get("name", "Cross-Chain Bridge"),
+                                "protocol": bridge_info.get("protocol", "Bridge"),
+                                "role": row.get("role", "ROUTER"),
+                            }
+                except Exception as e:
+                    log.warning("bridge_contracts batch query failed: %s", e)
+
+        return intel_map
+
+    async def persist_cross_chain_transfers(self, transfers: list[Any]) -> int:
+        """Persist verified cross-chain bridge transfers to Supabase."""
+        if not transfers or not self._has_url():
+            return 0
+
+        rows = [t.to_dict() if hasattr(t, "to_dict") else t for t in transfers]
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            for batch in _chunk(rows, 200):
+                try:
+                    r = await c.post(
+                        f"{self._rest}/cross_chain_transfers",
+                        headers={**self._svc_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
+                        json=batch,
+                    )
+                    if r.status_code >= 400:
+                        log.error("cross_chain_transfers insert %s: %s", r.status_code, r.text[:200])
+                except Exception as e:
+                    log.error("cross_chain_transfers persist failed: %s", e)
+        return len(rows)
+
     async def save_predictions(self, chain: str, scores: dict[str, dict]) -> int:
         rows = [{
             "chain": chain, "address": r.get("address"),
@@ -318,6 +429,157 @@ class SupabaseService:
         except Exception as e:                              # noqa: BLE001
             log.error("ML service unreachable: %s", e)
             return None
+
+
+    # =================================================================
+    # Batch 5: Real-Time Monitoring & Alerts
+    # =================================================================
+    async def get_active_monitored_wallets(self) -> list[dict[str, Any]]:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(
+                f"{self._rest}/monitored_wallets",
+                headers=self._svc_headers(),
+                params={"enabled": "eq.true", "select": "*"}
+            )
+            if r.status_code >= 400:
+                log.error("get_active_monitored_wallets error %s: %s", r.status_code, r.text)
+                return []
+            return r.json()
+
+    async def create_monitored_wallet(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            h = {**self._svc_headers(), "Prefer": "return=representation"}
+            r = await c.post(f"{self._rest}/monitored_wallets", headers=h, json=data)
+            if r.status_code >= 400:
+                log.error("create_monitored_wallet error %s: %s", r.status_code, r.text)
+                return None
+            res = r.json()
+            return res[0] if isinstance(res, list) and res else None
+
+    async def update_monitored_wallet(self, wallet_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            h = {**self._svc_headers(), "Prefer": "return=representation"}
+            r = await c.patch(
+                f"{self._rest}/monitored_wallets",
+                headers=h,
+                params={"id": f"eq.{wallet_id}"},
+                json=updates
+            )
+            if r.status_code >= 400:
+                log.error("update_monitored_wallet error %s: %s", r.status_code, r.text)
+                return None
+            res = r.json()
+            return res[0] if isinstance(res, list) and res else None
+
+    async def delete_monitored_wallet(self, wallet_id: str) -> bool:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.delete(
+                f"{self._rest}/monitored_wallets",
+                headers=self._svc_headers(),
+                params={"id": f"eq.{wallet_id}"}
+            )
+            return r.status_code < 400
+
+    async def get_monitoring_cursor(self, chain: str, address: str) -> dict[str, Any] | None:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(
+                f"{self._rest}/monitoring_cursors",
+                headers=self._svc_headers(),
+                params={"chain": f"eq.{chain}", "address": f"eq.{address}", "select": "*"}
+            )
+            if r.status_code >= 400:
+                return None
+            res = r.json()
+            return res[0] if isinstance(res, list) and res else None
+
+    async def update_monitoring_cursor(
+        self, chain: str, address: str, block: int, tx_hash: str
+    ):
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            h = {**self._svc_headers(), "Prefer": "resolution=merge-duplicates"}
+            row = {
+                "chain": chain, "address": address,
+                "last_processed_block": block, "last_processed_tx_hash": tx_hash,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            await c.post(f"{self._rest}/monitoring_cursors", headers=h, json=row)
+
+    async def persist_alert(self, alert_dict: dict[str, Any]) -> dict[str, Any] | None:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            h = {**self._svc_headers(), "Prefer": "resolution=ignore-duplicates,return=representation"}
+            r = await c.post(f"{self._rest}/alerts", headers=h, json=alert_dict)
+            if r.status_code >= 400:
+                log.error("persist_alert error %s: %s", r.status_code, r.text)
+                return None
+            res = r.json()
+            return res[0] if isinstance(res, list) and res else None
+
+    async def get_alerts(
+        self,
+        case_id: str = "SIH/2026/00412",
+        status: str | None = None,
+        severity: str | None = None,
+        chain: str | None = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> list[dict[str, Any]]:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            params: dict[str, str] = {
+                "case_id": f"eq.{case_id}",
+                "order": "created_at.desc",
+                "limit": str(limit),
+                "offset": str(offset),
+                "select": "*"
+            }
+            if status:
+                params["status"] = f"eq.{status}"
+            if severity:
+                params["severity"] = f"eq.{severity}"
+            if chain:
+                params["chain"] = f"eq.{chain}"
+            r = await c.get(f"{self._rest}/alerts", headers=self._svc_headers(), params=params)
+            if r.status_code >= 400:
+                log.error("get_alerts error %s: %s", r.status_code, r.text)
+                return []
+            return r.json()
+
+    async def get_alert_by_id(self, alert_id: str) -> dict[str, Any] | None:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(
+                f"{self._rest}/alerts",
+                headers=self._svc_headers(),
+                params={"id": f"eq.{alert_id}", "select": "*"}
+            )
+            if r.status_code >= 400:
+                return None
+            res = r.json()
+            return res[0] if isinstance(res, list) and res else None
+
+    async def update_alert_status(
+        self, alert_id: str, new_status: str, officer_name: str | None = None
+    ) -> dict[str, Any] | None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        updates: dict[str, Any] = {"status": new_status}
+        if new_status == "ACKNOWLEDGED":
+            updates["acknowledged_at"] = now_iso
+            updates["acknowledged_by"] = officer_name or "Officer User"
+        elif new_status in ("RESOLVED", "DISMISSED"):
+            updates["resolved_at"] = now_iso
+            updates["resolved_by"] = officer_name or "Officer User"
+
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            h = {**self._svc_headers(), "Prefer": "return=representation"}
+            r = await c.patch(
+                f"{self._rest}/alerts",
+                headers=h,
+                params={"id": f"eq.{alert_id}"},
+                json=updates
+            )
+            if r.status_code >= 400:
+                log.error("update_alert_status error %s: %s", r.status_code, r.text)
+                return None
+            res = r.json()
+            return res[0] if isinstance(res, list) and res else None
 
 
 def _epoch(iso_ts: str) -> float:
