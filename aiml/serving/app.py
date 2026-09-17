@@ -8,23 +8,30 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .inference import load_models
 from .ml_router import router as ml_router
 
+DEFAULT_ARTIFACTS = str(Path(__file__).resolve().parent.parent / "artifacts")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load all 4 ML models from artifacts/
-    artifacts_dir = os.getenv("ARTIFACTS_DIR", "artifacts")
+    # Load all 4 ML models from artifacts directory
+    artifacts_dir = os.getenv("ARTIFACTS_DIR", DEFAULT_ARTIFACTS)
     load_models(artifacts_dir)
     # Configure auth verifier: allow gateway service calls
     async def allow_service_calls(request):
         return True
     app.state.verify_officer = allow_service_calls
     yield
+
+
+# Initial load on import as well
+load_models(os.getenv("ARTIFACTS_DIR", DEFAULT_ARTIFACTS))
 
 
 app = FastAPI(
